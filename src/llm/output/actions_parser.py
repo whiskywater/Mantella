@@ -15,14 +15,16 @@ class actions_parser(output_parser):
         return None, output
 
     def modify_sentence_content(self, cut_content: SentenceContent, last_content: SentenceContent | None, settings: sentence_generation_settings) -> tuple[SentenceContent | None, SentenceContent | None]:
-        if ":" in cut_content.text:
+        action_source = cut_content.text
+        if ":" in action_source:
             for action in self.__actions:
                 keyword = action.keyword + ":"
-                if keyword in cut_content.text:
+                if keyword in action_source:
+                    action_text = self.__get_action_text(action_source, keyword)
                     cut_content.text = cut_content.text.replace(keyword,"").strip()
                     parsed_action = {'identifier': action.identifier}
                     if action.legacy_argument:
-                        argument_value, separator, remaining_text = cut_content.text.partition("|")
+                        argument_value, separator, remaining_text = action_text.partition("|")
                         argument_value = argument_value.strip()
                         if separator and argument_value:
                             parsed_action['arguments'] = {action.legacy_argument: argument_value}
@@ -32,6 +34,17 @@ class actions_parser(output_parser):
                     if action.is_interrupting:
                         settings.stop_generation = True
         return cut_content, last_content
+
+    def __get_action_text(self, text: str, keyword: str) -> str:
+        """Return only the text belonging to the specified action prefix."""
+        action_start = text.find(keyword) + len(keyword)
+        action_end = len(text)
+        for action in self.__actions:
+            next_keyword = action.keyword + ":"
+            next_action = text.find(next_keyword, action_start)
+            if next_action >= 0 and next_action < action_end:
+                action_end = next_action
+        return text[action_start:action_end].strip()
     
     def get_cut_indicators(self) -> list[str]:
         return [":"]
