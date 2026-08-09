@@ -1,9 +1,8 @@
 {
     "identifier": "mantella_npc_equip",
     "name": "Equip",
-    "description": "Make an NPC actually equip armor, clothing, ammunition, or a weapon from their real Skyrim inventory, then refresh Mantella with the verified current equipment state.",
+    "description": "Make an NPC equip armor, clothing, ammunition, or a weapon they actually own.",
     "key": "Equip",
-    "enabled": true,
     "parameters": {
         "source": {
             "type": "string",
@@ -12,14 +11,14 @@
         },
         "item_name": {
             "type": "string",
-            "description": "What should be equipped. For generic armor requests use 'best armor'; for a generic weapon request use 'best weapon'. For a specific item, use its concise in-game name when known.",
+            "description": "The item to equip. Use 'best armor' for generic armor or clothing and 'best weapon' for a generic weapon.",
             "default": "best armor"
         }
     },
     "required": [
         "source"
     ],
-    "prompt": "When the player's CURRENT request explicitly asks you to equip, wear, put on, draw, or ready equipment, begin your response with '{key}:'. The words after 'Equip:' are SPOKEN DIALOGUE, not an action parameter. NEVER output only 'Equip: best armor' or 'Equip: best weapon'. Instead use a short neutral acknowledgement such as 'Equip: All right, I will put on what I have.' Do NOT claim that you do or do not possess the requested equipment before the action runs. Do NOT announce success or failure before Skyrim checks. The Equip action checks the NPC's real inventory and returns an authoritative result. For generic requests such as 'equip your armor', 'put on your armor', 'wear the armor I gave you', or 'ready your weapon', trigger Equip even if the prompt's old worn-equipment description suggests otherwise. After an Equip action, the newest in-game equip/unequip events and refreshed actor equipment are authoritative CURRENT state and MUST override earlier dialogue, history, or the conversation-start worn-equipment snapshot. If the player then asks what you are wearing, answer from that newest equipment state. Do not revert to older clothing claims. Do not use Equip for discussion about equipment or when the player is only trying to transfer an item; use Inventory for transfers. If a request says to check inventory and then equip something, the final requested action is Equip unless the player explicitly asks to open the inventory menu.",
+    "prompt": "Only begin with '{key}:' when the player's current request explicitly asks to equip, wear, draw, or ready something. Use 'best armor' for generic armor/clothing requests and 'best weapon' for generic weapon requests. Equip checks the NPC's real inventory; do not claim success before Skyrim returns the result. The newest action result and refreshed equipment override stale equipment context. Use Inventory, not Equip, to transfer items.",
     "allowed_games": [
         "skyrim"
     ],
