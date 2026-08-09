@@ -120,6 +120,7 @@ def test_get_legacy_actions():
         assert hasattr(action, 'keyword')
         assert hasattr(action, 'description')
         assert hasattr(action, 'prompt_text')
+        assert hasattr(action, 'legacy_argument')
         assert hasattr(action, 'is_interrupting')
         assert hasattr(action, 'use_in_on_on_one')
         assert hasattr(action, 'use_in_multi_npc')

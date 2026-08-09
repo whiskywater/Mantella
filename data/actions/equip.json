@@ -3,6 +3,7 @@
     "name": "Equip",
     "description": "Make an NPC equip armor, clothing, ammunition, or a weapon they actually own.",
     "key": "Equip",
+    "legacy_argument": "item_name",
     "parameters": {
         "source": {
             "type": "string",
@@ -18,7 +19,7 @@
     "required": [
         "source"
     ],
-    "prompt": "Only begin with '{key}:' when the player's current request explicitly asks to equip, wear, draw, or ready something. Use 'best armor' for generic armor/clothing requests and 'best weapon' for generic weapon requests. Equip checks the NPC's real inventory; do not claim success before Skyrim returns the result. The newest action result and refreshed equipment override stale equipment context. Use Inventory, not Equip, to transfer items.",
+    "prompt": "Only begin with '{key}: <item_name> |' when the player's current request explicitly asks to equip, wear, draw, or ready something. Put the exact requested inventory name before '|'; use 'best armor' for generic armor/clothing and 'best weapon' for a generic weapon. Continue dialogue after '|', but do not claim success before Skyrim returns the result. Equip uses real inventory; use Inventory for transfers. The action result and refreshed equipment override stale context.",
     "allowed_games": [
         "skyrim"
     ],

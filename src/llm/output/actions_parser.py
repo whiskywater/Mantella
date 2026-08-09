@@ -20,8 +20,15 @@ class actions_parser(output_parser):
                 keyword = action.keyword + ":"
                 if keyword in cut_content.text:
                     cut_content.text = cut_content.text.replace(keyword,"").strip()
-                    cut_content.actions.append({'identifier': action.identifier})
-                    logger.log(28, f'Action triggered: {action.name} ({action.identifier})')
+                    parsed_action = {'identifier': action.identifier}
+                    if action.legacy_argument:
+                        argument_value, separator, remaining_text = cut_content.text.partition("|")
+                        argument_value = argument_value.strip()
+                        if separator and argument_value:
+                            parsed_action['arguments'] = {action.legacy_argument: argument_value}
+                            cut_content.text = remaining_text.strip()
+                    cut_content.actions.append(parsed_action)
+                    logger.log(28, f'Action triggered: {action.name} ({action.identifier}), arguments={parsed_action.get("arguments", {})}')
                     if action.is_interrupting:
                         settings.stop_generation = True
         return cut_content, last_content

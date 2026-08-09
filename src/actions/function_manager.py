@@ -240,8 +240,9 @@ class FunctionManager:
             one_on_one = bool(action_data.get('one-on-one', action_data.get('one_on_one', False)))
             multi_npc = bool(action_data.get('multi-npc', action_data.get('multi_npc', False)))
             radiant = bool(action_data.get('radiant', False))
+            legacy_argument = action_data.get('legacy_argument', '')
             
-            result.append(Action(identifier, name, key, description, prompt, requires_response, is_interrupting, one_on_one, multi_npc, radiant))
+            result.append(Action(identifier, name, key, description, prompt, requires_response, is_interrupting, one_on_one, multi_npc, radiant, legacy_argument))
         
         return result
 
