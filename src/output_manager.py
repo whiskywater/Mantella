@@ -294,6 +294,7 @@ class ChatManager:
             max_retries = 5
             retries = 0
 
+            legacy_actions_parser = actions_parser(actions, current_player_request)
             parser_chain: list[output_parser] = [
                 change_character_parser(characters, actions),
                 italics_parser()]
@@ -302,7 +303,7 @@ class ChatManager:
                                                     self.__config.speech_start_indicators, self.__config.speech_end_indicators))
             parser_chain.extend([
                 sentence_end_parser(),
-                actions_parser(actions, current_player_request),
+                legacy_actions_parser,
                 sentence_length_parser(self.__config.number_words_tts),
                 max_count_sentences_parser(max_response_sentences, not characters.contains_player_character(), self.__config.narration_handling == NarrationHandlingEnum.CUT_NARRATIONS)
             ])
@@ -362,6 +363,7 @@ class ChatManager:
                                     
                                     # Parse tool calls
                                     parsed_tools = FunctionManager.parse_function_calls(collected_tool_calls, characters, game)
+                                    legacy_actions_parser.mark_actions_triggered(parsed_tools)
                                     
                                     # Check if vision was requested - filter it out from game actions
                                     vision_requested = any(
@@ -514,6 +516,18 @@ class ChatManager:
                     if not self.__config.narration_handling == NarrationHandlingEnum.CUT_NARRATIONS or pending_sentence.sentence_type != SentenceTypeEnum.NARRATION:
                         new_sentence = self.generate_sentence(pending_sentence)
                         blocking_queue.put(new_sentence)
+                if has_text_response:
+                    missing_actions, obligation_speaker = legacy_actions_parser.get_missing_required_actions()
+                    if missing_actions:
+                        logger.warning(f"LLM omitted required current-turn action(s); invoking runtime evaluation: {missing_actions}")
+                        action_content = SentenceContent(
+                            obligation_speaker or active_character,
+                            "",
+                            SentenceTypeEnum.SPEECH,
+                            True,
+                            missing_actions,
+                        )
+                        blocking_queue.put(Sentence(action_content, "", 0))
                 logger.log(23, f"Full raw response ({active_client.get_count_tokens(raw_response)} tokens): {raw_response.strip()}")
                 blocking_queue.is_more_to_come = False
                 # This sentence is required to make sure there is one in case the game is already waiting for it

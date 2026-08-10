@@ -338,3 +338,105 @@ def test_unrestricted_legacy_action_keeps_existing_behavior():
     parsed, _ = parser.modify_sentence_content(content, None, sentence_generation_settings(None))
 
     assert parsed.actions == [{"identifier": "wave"}]
+
+
+def missing_required_equip(request: str, response: str = "I cannot equip that.") -> list[dict]:
+    parser = actions_parser([make_equip_action()], request)
+    parser.modify_sentence_content(
+        SentenceContent(None, response, SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    missing, _ = parser.get_missing_required_actions()
+    return missing
+
+
+def test_explicit_generic_equip_omission_requires_runtime_evaluation():
+    for request in (
+        "Please equip your armor",
+        "I'm telling you to equip your armor.",
+        "Please put on your armor.",
+    ):
+        assert missing_required_equip(request) == [{
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": "best armor"},
+        }]
+
+
+def test_explicit_correction_requires_equip_again():
+    assert missing_required_equip("You do not have the shield equipped. Equip the shield.") == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "shield"},
+    }]
+
+
+def test_repeated_current_request_creates_independent_obligation():
+    first = missing_required_equip("Equip the shield.")
+    second = missing_required_equip("Equip the shield.")
+    assert first == second
+    assert first[0]["arguments"]["item_name"] == "shield"
+
+
+def test_mentions_capability_questions_and_negation_do_not_require_equip():
+    for request in (
+        "That shield looks useful.",
+        "Can you use a shield?",
+        "What armor are you wearing?",
+        "Do not equip the shield.",
+    ):
+        assert missing_required_equip(request) == []
+
+
+def test_request_phrased_as_question_requires_equip():
+    assert missing_required_equip("Can you equip the shield?")[0]["arguments"] == {"item_name": "shield"}
+
+
+def test_history_and_events_cannot_create_current_turn_obligation():
+    assert missing_required_equip("Where did you get that shield?") == []
+    assert missing_required_equip("How are you feeling?", "Camilla equipped Imperial Shield.") == []
+    parser = actions_parser([make_equip_action()], None)
+    parser.modify_sentence_content(
+        SentenceContent(None, "Equip the shield happened earlier.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert parser.get_missing_required_actions()[0] == []
+
+
+def test_inventory_action_does_not_satisfy_explicit_equip_obligation():
+    parser = actions_parser(
+        [make_inventory_action(), make_equip_action()],
+        "Check your inventory and equip the armor.",
+    )
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Inventory: Here is what I have.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert parsed.actions == [{"identifier": "mantella_npc_inventory"}]
+    assert parser.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor"},
+    }]
+
+
+def test_emitted_legacy_or_structured_equip_satisfies_obligation():
+    legacy = actions_parser([make_equip_action()], "Equip your armor.")
+    legacy.modify_sentence_content(
+        SentenceContent(None, "Equip: best armor | All right.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert legacy.get_missing_required_actions()[0] == []
+
+    structured = actions_parser([make_equip_action()], "Equip your armor.")
+    structured.mark_actions_triggered([{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor"},
+    }])
+    assert structured.get_missing_required_actions()[0] == []
+
+
+def test_generic_weapon_and_specific_item_targets_are_preserved():
+    assert missing_required_equip("Use your best weapon.")[0]["arguments"] == {"item_name": "best weapon"}
+    assert missing_required_equip("Could you equip the Iron Shield?")[0]["arguments"] == {"item_name": "Iron Shield"}
