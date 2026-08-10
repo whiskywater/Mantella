@@ -225,7 +225,7 @@ class ChatManager:
                 and self.__config.game.base_game == GameEnum.SKYRIM)
 
     @utils.time_it
-    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None):
+    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None):
         """Starts generating responses by the LLM for the current state of the input messages
 
         Args:
@@ -239,7 +239,7 @@ class ChatManager:
             return
         self.__is_generating = True
         
-        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game))
+        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game, current_player_request))
     
     @utils.time_it
     def stop_generation(self):
@@ -277,7 +277,7 @@ class ChatManager:
             messages.add_message(tool_result_message)
     
     @utils.time_it
-    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None):
+    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None):
         """Stream response from LLM one sentence at a time"""
         with create_span_from_thread("process_response") as span:
             span.set_attribute("active_character.name", active_character.name)
@@ -302,7 +302,7 @@ class ChatManager:
                                                     self.__config.speech_start_indicators, self.__config.speech_end_indicators))
             parser_chain.extend([
                 sentence_end_parser(),
-                actions_parser(actions),
+                actions_parser(actions, current_player_request),
                 sentence_length_parser(self.__config.number_words_tts),
                 max_count_sentences_parser(max_response_sentences, not characters.contains_player_character(), self.__config.narration_handling == NarrationHandlingEnum.CUT_NARRATIONS)
             ])

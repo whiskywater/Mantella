@@ -3,6 +3,15 @@
     "name": "Inventory",
     "description": "Open inventory to give / take items with the player.",
     "key": "Inventory",
+    "legacy_action_group": "npc_items",
+    "legacy_action_hints": [
+        "check your inventory",
+        "show your inventory",
+        "open your inventory",
+        "give me",
+        "give you",
+        "take from"
+    ],
     "parameters": {
         "source": {
             "type": "string",

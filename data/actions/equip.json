@@ -4,6 +4,15 @@
     "description": "Make an NPC equip armor, clothing, ammunition, or a weapon they actually own.",
     "key": "Equip",
     "legacy_argument": "item_name",
+    "legacy_action_group": "npc_items",
+    "legacy_action_hints": [
+        "equip",
+        "wear",
+        "put on",
+        "wield",
+        "draw",
+        "ready"
+    ],
     "parameters": {
         "source": {
             "type": "string",

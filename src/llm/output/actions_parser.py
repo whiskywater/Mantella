@@ -7,9 +7,10 @@ logger = utils.get_logger()
 
     
 class actions_parser(output_parser):
-    def __init__(self, actions: list[Action]) -> None:
+    def __init__(self, actions: list[Action], current_player_request: str | None = None) -> None:
         super().__init__()
         self.__actions = actions
+        self.__detected_actions_by_group = self.__detect_action_categories(current_player_request)
 
     def cut_sentence(self, output: str, current_settings: sentence_generation_settings) -> tuple[SentenceContent|None, str|None]:
         return None, output
@@ -20,6 +21,9 @@ class actions_parser(output_parser):
             for action in self.__actions:
                 keyword = action.keyword + ":"
                 if keyword in action_source:
+                    if self.__is_cross_action_contamination(action):
+                        logger.warning(f"Ignoring cross-action contamination: {action.name} ({action.identifier})")
+                        continue
                     action_text = self.__get_action_text(action_source, keyword)
                     cut_content.text = cut_content.text.replace(keyword,"").strip()
                     parsed_action = {'identifier': action.identifier}
@@ -34,6 +38,34 @@ class actions_parser(output_parser):
                     if action.is_interrupting:
                         settings.stop_generation = True
         return cut_content, last_content
+
+    def __detect_action_categories(self, current_player_request: str | None) -> dict[str, set[str]]:
+        """Find clear action-category hints without deciding semantic intent.
+
+        These hints only isolate protected legacy action families from one another.
+        The LLM and action prompt remain responsible for negation, tense, history,
+        hypotheticals, and whether an action should be invoked at all.
+        """
+        if current_player_request is None:
+            return {}
+        normalized_request = f" {utils.clean_text(current_player_request)} "
+        detected: dict[str, set[str]] = {}
+        for action in self.__actions:
+            if not action.legacy_action_group:
+                continue
+            if any(
+                normalized_hint and f" {normalized_hint} " in normalized_request
+                for hint in action.legacy_action_hints
+                if (normalized_hint := utils.clean_text(hint))
+            ):
+                detected.setdefault(action.legacy_action_group, set()).add(action.identifier)
+        return detected
+
+    def __is_cross_action_contamination(self, action: Action) -> bool:
+        if not action.legacy_action_group:
+            return False
+        detected_actions = self.__detected_actions_by_group.get(action.legacy_action_group, set())
+        return bool(detected_actions) and action.identifier not in detected_actions
 
     def __get_action_text(self, text: str, keyword: str) -> str:
         """Return only the text belonging to the specified action prefix."""

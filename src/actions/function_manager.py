@@ -241,8 +241,10 @@ class FunctionManager:
             multi_npc = bool(action_data.get('multi-npc', action_data.get('multi_npc', False)))
             radiant = bool(action_data.get('radiant', False))
             legacy_argument = action_data.get('legacy_argument', '')
+            legacy_action_group = action_data.get('legacy_action_group', '')
+            legacy_action_hints = action_data.get('legacy_action_hints', [])
             
-            result.append(Action(identifier, name, key, description, prompt, requires_response, is_interrupting, one_on_one, multi_npc, radiant, legacy_argument))
+            result.append(Action(identifier, name, key, description, prompt, requires_response, is_interrupting, one_on_one, multi_npc, radiant, legacy_argument, legacy_action_group, legacy_action_hints))
         
         return result
 
