@@ -384,15 +384,21 @@ class Context:
     
     @utils.time_it
     def __get_npc_equipment_text(self) -> str:
-        """Gets the equipment description of all npcs in the conversation
+        """Gets authoritative live equipment for all NPCs in the conversation.
 
         Returns:
             str: the equipment descriptions concatenated together into a single string
         """
         equipment_descriptions = []
         for character in self.__npcs_in_conversation.get_non_player_characters():
-                equipment_descriptions.append(character.equipment.get_equipment_description(character.name))
-        return " ".join(equipment_descriptions)
+            description = character.equipment.get_equipment_description(character.name)
+            if description:
+                equipment_descriptions.append(description)
+            else:
+                equipment_descriptions.append(f"{character.name} has no equipped armor or weapons reported by Skyrim.")
+        if not equipment_descriptions:
+            return ""
+        return "Authoritative current Skyrim equipment (overrides contradictory dialogue, events, and memories): " + " ".join(equipment_descriptions)
     
     @utils.time_it
     def __get_action_texts(self, actions: list[Action]) -> str:

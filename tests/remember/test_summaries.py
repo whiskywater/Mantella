@@ -482,6 +482,7 @@ class TestGenderAndRacePromptVariables:
             prompt_arg = mock_summarize.call_args[0][1]
 
         assert "Guard is a male Imperial." in prompt_arg
+        assert "Do not record inventory contents, currently worn/equipped items" in prompt_arg
 
     def test_resummarize_prompt_includes_gender_and_race(
         self, skyrim: Skyrim, default_config: ConfigLoader, llm_client: LLMClient,

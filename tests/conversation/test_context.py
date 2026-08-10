@@ -31,6 +31,14 @@ def test_multi_npc_equip_prompt_requires_named_current_action(default_config: Co
     assert "if agreeing, invoke Equip again in the CURRENT response" in prompt
     assert "Past dialogue, history, and passive equipment events do not authorize Equip" in prompt
 
+
+def test_current_skyrim_equipment_is_marked_authoritative(default_context: Context):
+    prompt = default_context.generate_system_message("{equipment}\n{conversation_summaries}", [])
+
+    assert "Authoritative current Skyrim equipment" in prompt
+    assert "overrides contradictory dialogue, events, and memories" in prompt
+    assert "Guard wears" in prompt
+
 def test_context_generates_prompt_without_actions_when_advanced_enabled(default_config: ConfigLoader, default_context: Context):
     """
     Tests that Context.generate_system_message returns empty actions placeholder when advanced actions are enabled

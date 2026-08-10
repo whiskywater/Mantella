@@ -77,6 +77,10 @@ class Conversation:
         self.last_sentence_start_time = time.time()
         self.__end_conversation_keywords = utils.parse_keywords(context_for_conversation.config.end_conversation_keyword)
         self.__awaiting_action_result: bool = False
+        # Player-established Equip targets are scoped to this conversation and NPC.
+        # They resolve only later explicit referential Equip requests; message
+        # history, NPC text, action output, and in-game events never populate it.
+        self.__last_player_equip_targets: dict[str, str] = {}
 
     @property
     def has_already_ended(self) -> bool:
@@ -502,7 +506,7 @@ class Conversation:
                 opentelemetry_context = OpenTelemetryContext.get_current()
                 def thread_target():
                     set_parent_context(opentelemetry_context)
-                    self.__output_manager.generate_response(self.__messages, self.__context.npcs_in_conversation, self.__sentences, self.context.config.actions, tools, self.__game, current_player_request)
+                    self.__output_manager.generate_response(self.__messages, self.__context.npcs_in_conversation, self.__sentences, self.context.config.actions, tools, self.__game, current_player_request, self.__last_player_equip_targets)
                 self.__generation_thread = Thread(target=thread_target)
                 self.__generation_thread.start()
 

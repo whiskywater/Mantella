@@ -225,7 +225,7 @@ class ChatManager:
                 and self.__config.game.base_game == GameEnum.SKYRIM)
 
     @utils.time_it
-    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None):
+    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None, player_equip_targets: dict[str, str] | None = None):
         """Starts generating responses by the LLM for the current state of the input messages
 
         Args:
@@ -239,7 +239,7 @@ class ChatManager:
             return
         self.__is_generating = True
         
-        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game, current_player_request))
+        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game, current_player_request, player_equip_targets))
     
     @utils.time_it
     def stop_generation(self):
@@ -277,7 +277,7 @@ class ChatManager:
             messages.add_message(tool_result_message)
     
     @utils.time_it
-    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None):
+    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None, player_equip_targets: dict[str, str] | None = None):
         """Stream response from LLM one sentence at a time"""
         with create_span_from_thread("process_response") as span:
             span.set_attribute("active_character.name", active_character.name)
@@ -294,7 +294,8 @@ class ChatManager:
             max_retries = 5
             retries = 0
 
-            legacy_actions_parser = actions_parser(actions, current_player_request)
+            participant_names = [character.name for character in characters.get_non_player_characters()]
+            legacy_actions_parser = actions_parser(actions, current_player_request, player_equip_targets, participant_names)
             parser_chain: list[output_parser] = [
                 change_character_parser(characters, actions),
                 italics_parser()]
@@ -363,7 +364,7 @@ class ChatManager:
                                     
                                     # Parse tool calls
                                     parsed_tools = FunctionManager.parse_function_calls(collected_tool_calls, characters, game)
-                                    legacy_actions_parser.mark_actions_triggered(parsed_tools)
+                                    parsed_tools = legacy_actions_parser.mark_actions_triggered(parsed_tools, active_character)
                                     
                                     # Check if vision was requested - filter it out from game actions
                                     vision_requested = any(

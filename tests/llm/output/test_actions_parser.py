@@ -2,6 +2,8 @@ from src.conversation.action import Action
 from src.llm.output.actions_parser import actions_parser
 from src.llm.output.output_parser import sentence_generation_settings
 from src.llm.sentence_content import SentenceContent, SentenceTypeEnum
+from types import SimpleNamespace
+import pytest
 
 
 def make_equip_action() -> Action:
@@ -129,7 +131,7 @@ def test_legacy_equip_does_not_consume_following_action_block():
 
 def test_equip_category_filters_inventory_and_barter_contamination():
     actions = [make_inventory_action(), make_barter_action(), make_equip_action()]
-    parser = actions_parser(actions, "Camilla equip your armor")
+    parser = actions_parser(actions, "Camilla equip your armor", {}, ["Camilla"])
     settings = sentence_generation_settings(None)
 
     inventory = SentenceContent(None, "Inventory: Belted Tunic Iron Plate Armor", SentenceTypeEnum.SPEECH)
@@ -143,14 +145,14 @@ def test_equip_category_filters_inventory_and_barter_contamination():
     assert parsed_barter.actions == []
     assert parsed_equip.actions == [{
         "identifier": "mantella_npc_equip",
-        "arguments": {"item_name": "Iron Plate Armor"},
+        "arguments": {"item_name": "best armor"},
     }]
     assert parsed_equip.text == "Very well. I'll put this on."
 
 
 def test_equip_category_isolates_exact_malformed_completion():
     actions = [make_inventory_action(), make_barter_action(), make_equip_action()]
-    parser = actions_parser(actions, "Camilla equip your armor")
+    parser = actions_parser(actions, "Camilla equip your armor", {}, ["Camilla"])
     content = SentenceContent(
         None,
         "Inventory: Belted Tunic Iron Plate Armor "
@@ -164,7 +166,7 @@ def test_equip_category_isolates_exact_malformed_completion():
 
     assert parsed.actions == [{
         "identifier": "mantella_npc_equip",
-        "arguments": {"item_name": "Iron Plate Armor"},
+        "arguments": {"item_name": "best armor"},
     }]
     assert parsed.text == "Very well. I'll put this on."
 
@@ -182,7 +184,7 @@ def test_inventory_noun_in_equip_request_is_not_an_inventory_category_hint():
 
     assert parsed.actions == [{
         "identifier": "mantella_npc_equip",
-        "arguments": {"item_name": "Iron Plate Armor"},
+        "arguments": {"item_name": "best armor"},
     }]
 
 
@@ -440,3 +442,364 @@ def test_emitted_legacy_or_structured_equip_satisfies_obligation():
 def test_generic_weapon_and_specific_item_targets_are_preserved():
     assert missing_required_equip("Use your best weapon.")[0]["arguments"] == {"item_name": "best weapon"}
     assert missing_required_equip("Could you equip the Iron Shield?")[0]["arguments"] == {"item_name": "Iron Shield"}
+
+
+def test_generic_armor_requests_override_currently_worn_clothing_output():
+    for request in (
+        "Equip your armor.",
+        "Equip the armor.",
+        "Put on your armor.",
+        "Wear your armor.",
+        "Wear some armor.",
+    ):
+        parser = actions_parser([make_equip_action()], request)
+        parsed, _ = parser.modify_sentence_content(
+            SentenceContent(None, "Equip: Belted Tunic | All right.", SentenceTypeEnum.SPEECH),
+            None,
+            sentence_generation_settings(None),
+        )
+        assert parsed.actions == [{
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": "best armor"},
+        }]
+        assert parser.get_missing_required_actions()[0] == []
+
+
+def test_generic_weapon_request_overrides_prompt_inferred_weapon():
+    for request in ("Equip your weapon.", "Draw your weapon.", "Ready a weapon."):
+        parser = actions_parser([make_equip_action()], request)
+        parsed, _ = parser.modify_sentence_content(
+            SentenceContent(None, "Equip: Iron Dagger | Ready.", SentenceTypeEnum.SPEECH),
+            None,
+            sentence_generation_settings(None),
+        )
+        assert parsed.actions[0]["arguments"] == {"item_name": "best weapon"}
+
+
+def test_named_item_request_remains_exact():
+    for request, expected in (
+        ("Equip Iron Armor.", "Iron Armor"),
+        ("Equip the Imperial Shield.", "Imperial Shield"),
+    ):
+        parser = actions_parser([make_equip_action()], request)
+        parsed, _ = parser.modify_sentence_content(
+            SentenceContent(None, "Equip: Belted Tunic | Fine.", SentenceTypeEnum.SPEECH),
+            None,
+            sentence_generation_settings(None),
+        )
+        assert parsed.actions[0]["arguments"] == {"item_name": expected}
+
+
+def test_structured_equip_uses_bound_target_and_preserves_source():
+    parser = actions_parser([make_equip_action()], "Camilla, equip your armor.", {}, ["Camilla"])
+    structured = {
+        "identifier": "mantella_npc_equip",
+        "arguments": {"source": "Camilla Valerius", "item_name": "Belted Tunic"},
+    }
+    reconciled = parser.mark_actions_triggered([structured])
+
+    assert reconciled == [structured]
+    assert structured["arguments"] == {
+        "source": "Camilla Valerius",
+        "item_name": "best armor",
+    }
+    assert parser.get_missing_required_actions()[0] == []
+
+
+def test_inventory_and_generic_equip_preserve_both_with_runtime_target():
+    parser = actions_parser(
+        [make_inventory_action(), make_equip_action()],
+        "Check your inventory and equip your armor.",
+    )
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(
+            None,
+            "Inventory: Equip: Belted Tunic | Here is what I have.",
+            SentenceTypeEnum.SPEECH,
+        ),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == [
+        {"identifier": "mantella_npc_inventory"},
+        {
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": "best armor"},
+        },
+    ]
+
+
+def test_referential_request_keeps_concrete_same_generation_resolution():
+    parser = actions_parser([make_equip_action()], "Yes, please equip it.")
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Equip: Imperial Shield | I suppose you are right.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "Imperial Shield"},
+    }]
+    assert parser.get_missing_required_actions()[0] == []
+
+
+def test_unresolved_referential_request_does_not_guess_or_dispatch():
+    parser = actions_parser([make_equip_action()], "Equip it.")
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Equip: it | All right.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == []
+    assert parser.get_missing_required_actions()[0] == []
+
+
+def test_referential_structured_equip_preserves_source_and_concrete_resolution():
+    parser = actions_parser([make_equip_action()], "Camilla, put that on.", {}, ["Camilla"])
+    structured = {
+        "identifier": "mantella_npc_equip",
+        "arguments": {"source": "Camilla Valerius", "item_name": "Imperial Shield"},
+    }
+
+    reconciled = parser.mark_actions_triggered([structured])
+
+    assert reconciled == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"source": "Camilla Valerius", "item_name": "Imperial Shield"},
+    }]
+
+
+def test_negated_separable_put_on_does_not_authorize_equip():
+    assert missing_required_equip("Do not put that on.") == []
+
+
+def test_separable_put_on_requires_a_concrete_same_generation_resolution():
+    parser = actions_parser([make_equip_action()], "Put that on.")
+    unresolved = {
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "that"},
+    }
+
+    assert parser.mark_actions_triggered([unresolved]) == []
+
+
+def test_referential_resolution_requires_current_request_authorization():
+    parser = actions_parser([make_equip_action()], None)
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Imperial Shield was equipped earlier.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == []
+    assert parser.get_missing_required_actions()[0] == []
+
+
+def test_same_turn_explicit_antecedent_resolves_pronoun_for_emitted_and_fallback_actions():
+    request = "No, it's just regular iron armor, please check and equip it."
+    speaker = SimpleNamespace(name="Camilla")
+
+    emitted_parser = actions_parser([make_equip_action()], request, {})
+    emitted, _ = emitted_parser.modify_sentence_content(
+        SentenceContent(speaker, "Equip: it | Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert emitted.actions[0]["arguments"] == {"item_name": "regular iron armor"}
+
+    fallback_parser = actions_parser([make_equip_action()], request, {})
+    fallback_parser.modify_sentence_content(
+        SentenceContent(speaker, "Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert fallback_parser.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "regular iron armor"},
+    }]
+
+
+def test_inventory_antecedent_resolves_same_turn_pronoun():
+    parser = actions_parser(
+        [make_equip_action()],
+        "The shield is in your inventory, equip it.",
+        {},
+    )
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(SimpleNamespace(name="Camilla"), "Equip: it | Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert parsed.actions[0]["arguments"] == {"item_name": "shield"}
+
+
+def test_player_explicit_target_resolves_immediate_followup_for_same_npc():
+    targets = {}
+    speaker = SimpleNamespace(name="Camilla")
+    first = actions_parser([make_equip_action()], "Equip regular iron armor.", targets)
+    first.modify_sentence_content(
+        SentenceContent(speaker, "Equip: Iron Armor | Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert targets == {"camilla": "regular iron armor"}
+
+    followup = actions_parser(
+        [make_equip_action()],
+        "No, you're still not wearing it. Please equip it now.",
+        targets,
+    )
+    followup.modify_sentence_content(
+        SentenceContent(speaker, "I already did.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert followup.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "regular iron armor"},
+    }]
+
+
+def test_player_equip_target_memory_isolated_by_npc():
+    targets = {"npc a": "Iron Armor"}
+    parser = actions_parser(
+        [make_equip_action()],
+        "NPC B, equip it now.",
+        targets,
+        ["NPC A", "NPC B"],
+    )
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(SimpleNamespace(name="NPC B"), "Equip: it | Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == []
+    assert parser.get_missing_required_actions()[0] == []
+    assert targets == {"npc a": "Iron Armor"}
+
+
+def test_equip_vocatives_are_removed_before_target_extraction():
+    cases = (
+        ("Please equip your armor, Camilia.", "best armor"),
+        ("Camilla, equip your armor.", "best armor"),
+        ("Equip the iron armor, Camilla.", "iron armor"),
+        ("Camilla equip the Imperial Shield.", "Imperial Shield"),
+    )
+    for request, expected in cases:
+        parser = actions_parser(
+            [make_equip_action()],
+            request,
+            {},
+            ["Camilla Valerius"],
+        )
+        parser.modify_sentence_content(
+            SentenceContent(SimpleNamespace(name="Camilla Valerius"), "I will do that.", SentenceTypeEnum.SPEECH),
+            None,
+            sentence_generation_settings(None),
+        )
+
+        assert parser.get_missing_required_actions()[0] == [{
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": expected},
+        }]
+
+
+def test_actor_contaminated_target_is_never_remembered():
+    targets = {}
+    parser = actions_parser(
+        [make_equip_action()],
+        "Please equip your armor, Camilia.",
+        targets,
+        ["Camilla Valerius"],
+    )
+    parser.modify_sentence_content(
+        SentenceContent(SimpleNamespace(name="Camilla Valerius"), "Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    parser.get_missing_required_actions()
+
+    assert targets == {"camilla valerius": "best armor"}
+    assert all("camilia" not in value.lower() for value in targets.values())
+
+
+def test_malformed_previous_target_cannot_leak_into_correction():
+    targets = {"camilla valerius": "armor, Camilia"}
+    parser = actions_parser(
+        [make_equip_action()],
+        "Camilla, equip it again.",
+        targets,
+        ["Camilla Valerius"],
+    )
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(SimpleNamespace(name="Camilla Valerius"), "Equip: it | Fine.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == []
+    assert parser.get_missing_required_actions()[0] == []
+    assert targets == {}
+
+
+@pytest.mark.parametrize("command_text", (
+    "Camilla, equip your armor.",
+    "Camilla where is your armor put it back on equip your armor",
+    "Can you please equip your armor?",
+    "Please put your armor back on.",
+    "You don't have your armor on. Put it back on.",
+))
+def test_natural_language_armor_commands_create_one_generic_obligation(command_text):
+    assert missing_required_equip(command_text) == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor"},
+    }]
+
+
+def test_shield_residue_is_normalized_to_category_target():
+    assert missing_required_equip("Please equip your shield, too.") == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "shield"},
+    }]
+
+
+def test_chest_qualifier_is_not_sent_as_part_of_item_name():
+    assert missing_required_equip("Please put on the iron armor for your chest.") == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "iron armor"},
+    }]
+
+
+def test_compound_inventory_and_equip_create_ordered_obligations():
+    parser = actions_parser(
+        [make_inventory_action(), make_equip_action()],
+        "Check your inventory and then equip the iron armor.",
+    )
+    missing, _ = parser.get_missing_required_actions()
+    assert missing == [
+        {"identifier": "mantella_npc_inventory", "arguments": {}},
+        {"identifier": "mantella_npc_equip", "arguments": {"item_name": "iron armor"}},
+    ]
+
+
+def test_unrelated_model_argument_cannot_replace_compound_explicit_target():
+    parser = actions_parser([make_equip_action()], "Please equip the iron armor for your chest.")
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Equip: Belted Tunic | I will do that.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+    assert parsed.actions[0]["arguments"] == {"item_name": "iron armor"}
+
+
+def test_unresolved_compound_pronoun_does_not_create_duplicate_when_concrete_equip_follows():
+    parser = actions_parser([make_equip_action()], "Put it back on and equip your armor.")
+    missing, _ = parser.get_missing_required_actions()
+    assert missing == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor"},
+    }]
