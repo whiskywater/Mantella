@@ -1,6 +1,35 @@
 from src.conversation.context import Context
 from src.config.config_loader import ConfigLoader
 from src.character_manager import Character
+from src.actions.function_manager import FunctionManager
+
+
+def get_equip_action():
+    FunctionManager.load_all_actions()
+    return next(action for action in FunctionManager.get_legacy_actions()
+                if action.identifier == "mantella_npc_equip")
+
+
+def test_single_npc_equip_prompt_requires_current_action(default_config: ConfigLoader, default_context: Context):
+    default_config.advanced_actions_enabled = False
+    prompt = default_context.generate_system_message(default_config.prompt, [get_equip_action()])
+
+    assert "For one NPC use 'Equip: <item_name> | <dialogue>'" in prompt
+    assert "if agreeing, invoke Equip again in the CURRENT response" in prompt
+    assert "passive equipment events do not authorize Equip" in prompt
+
+
+def test_multi_npc_equip_prompt_requires_named_current_action(default_config: ConfigLoader, default_context: Context,
+                                                              another_example_skyrim_npc_character: Character):
+    default_config.advanced_actions_enabled = False
+    all_characters = default_context.npcs_in_conversation.get_all_characters() + [another_example_skyrim_npc_character]
+    default_context.add_or_update_characters(all_characters, message_count=0)
+
+    prompt = default_context.generate_system_message(default_config.multi_npc_prompt, [get_equip_action()])
+
+    assert "'<full NPC name>: Equip: <item_name> | <dialogue>'" in prompt
+    assert "if agreeing, invoke Equip again in the CURRENT response" in prompt
+    assert "Past dialogue, history, and passive equipment events do not authorize Equip" in prompt
 
 def test_context_generates_prompt_without_actions_when_advanced_enabled(default_config: ConfigLoader, default_context: Context):
     """

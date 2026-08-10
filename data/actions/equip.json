@@ -19,7 +19,7 @@
     "required": [
         "source"
     ],
-    "prompt": "Only begin with '{key}: <item_name> |' when the player's current request explicitly asks to equip, wear, draw, or ready something. Put the exact requested inventory name before '|'; use 'best armor' for generic armor/clothing and 'best weapon' for a generic weapon. Continue dialogue after '|', but do not claim success before Skyrim returns the result. Equip uses real inventory; use Inventory for transfers. The action result and refreshed equipment override stale context.",
+    "prompt": "Only invoke Equip when the player's CURRENT request explicitly asks to equip, wear, draw, or ready something. A correction that an item is not actually equipped or that a prior attempt failed is a new explicit request: if agreeing, invoke Equip again in the CURRENT response. For one NPC use '{key}: <item_name> | <dialogue>'; in a multi-NPC conversation use '<full NPC name>: {key}: <item_name> | <dialogue>'. Put the exact requested inventory name before '|'; use 'best armor' for generic armor/clothing and 'best weapon' for a generic weapon. Never claim an equip request succeeded without invoking Equip in the CURRENT response and waiting for Skyrim's result. Past dialogue, history, and passive equipment events do not authorize Equip. Equip uses real inventory; use Inventory for transfers. The action result and refreshed equipment override stale context.",
     "allowed_games": [
         "skyrim"
     ],
