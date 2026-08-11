@@ -70,6 +70,17 @@ class actions_parser(output_parser):
             if not isinstance(action, dict):
                 continue
             identifier = action.get('identifier', '')
+            action_source = action.get('arguments', {}).get('source', '')
+            if action_source and any(
+                required.get('identifier') == identifier
+                and required.get('arguments', {}).get('source', '')
+                and utils.clean_text(required['arguments']['source']) != utils.clean_text(action_source)
+                for required in self.__required_actions
+            ):
+                # A model action explicitly routed to another participant must
+                # not survive as an unrelated action when this turn has a
+                # source-bound obligation.
+                continue
             required_index, required_action = self.__find_required_action(action, speaker)
             if required_action and required_action.get('arguments'):
                 required_target = required_action['arguments'].get('item_name', '')
@@ -79,6 +90,11 @@ class actions_parser(output_parser):
                 if not resolved_target:
                     continue
                 action.setdefault('arguments', {})['item_name'] = resolved_target
+                required_source = required_action.get('arguments', {}).get('source', '')
+                if required_source:
+                    # The current player turn, not the model's sentence
+                    # speaker, owns the actor route for this obligation.
+                    action['arguments']['source'] = required_source
                 self.__remember_explicit_player_target(required_target, resolved_target, actor_key)
             if required_index is not None:
                 self.__triggered_required_indexes.add(required_index)
@@ -184,21 +200,33 @@ class actions_parser(output_parser):
         """
         if not current_player_request:
             return []
-        request = self.__strip_addressed_actor(utils.remove_extra_whitespace(current_player_request).strip())
+        raw_request = utils.remove_extra_whitespace(current_player_request).strip()
+        request = self.__strip_addressed_actor(raw_request)
         obligations: list[tuple[int, dict]] = []
 
         equip_action = next((action for action in self.__actions if action.identifier == 'mantella_npc_equip'), None)
         if equip_action:
-            equip_pattern = re.compile(r"\b(?:equip|wear|wield|draw|ready)\b|\buse\s+(?=(?:your\s+)?best\s+(?:armor|armour|weapon)\b)|\bput\s+on\b|\bput\b(?=\s+[^.!?]{1,80}\s+on\b)", re.IGNORECASE)
-            for match in equip_pattern.finditer(request):
+            equip_pattern = re.compile(r"\b(?:equip|wear|wearing|wield|draw|ready)\b|\bmeant\b(?=\s+(?:the|your|an?|some)\s+)|\buse\s+(?=(?:your\s+)?best\s+(?:armor|armour|weapon)\b)|\bput\s+on\b|\bput\b(?=\s+[^.!?]{1,80}\s+on\b)", re.IGNORECASE)
+            raw_matches = list(equip_pattern.finditer(raw_request))
+            for occurrence, match in enumerate(equip_pattern.finditer(request)):
                 if self.__is_non_command_equip(request, match):
                     continue
                 target = self.__extract_equip_target(request, match)
                 if not target:
                     continue
+                source = self.__obligation_source(
+                    raw_request,
+                    raw_matches[occurrence].start() if occurrence < len(raw_matches) else match.start(),
+                )
+                arguments = {equip_action.legacy_argument: target}
+                # In a multi-NPC turn the generated sentence speaker is not an
+                # actor-routing signal. Preserve the addressed actor on each
+                # obligation so fallback and emitted actions use the same target.
+                if source and len(self.__participant_names) > 1:
+                    arguments['source'] = source
                 obligations.append((match.start(), {
                     'identifier': equip_action.identifier,
-                    'arguments': {equip_action.legacy_argument: target},
+                    'arguments': arguments,
                 }))
 
         inventory_action = next((action for action in self.__actions if action.identifier == 'mantella_npc_inventory'), None)
@@ -244,6 +272,25 @@ class actions_parser(output_parser):
         positions = [request.lower().find(phrase) for phrase in phrases if request.lower().find(phrase) >= 0]
         return min(positions) if positions else len(request)
 
+    def __obligation_source(self, request: str, action_position: int) -> str:
+        """Return the participant explicitly addressed for this action clause."""
+        if not self.__participant_names:
+            return ''
+        latest_start = -1
+        latest_name = ''
+        prefix = request[:action_position]
+        for name in self.__participant_names:
+            for alias in self.__actor_aliases(name):
+                match = re.search(
+                    r"(?:^|[.!?,])\s*" + re.escape(alias) + r"(?:\s*,|\s+)",
+                    prefix,
+                    re.IGNORECASE,
+                )
+                if match and match.start() >= latest_start:
+                    latest_start = match.start()
+                    latest_name = name
+        return latest_name or self.__requested_actor_name
+
     def __has_inventory_request(self, request: str) -> bool:
         return bool(re.search(
             r"\b(?:check|show|open|look\s+at|view)\s+(?:your\s+)?inventory\b|"
@@ -261,6 +308,19 @@ class actions_parser(output_parser):
             return True
         if re.search(r"(?:^|[.!?]\s*)(?:why did|what did|when did|do you remember when)\b", request[:match.start()], re.IGNORECASE):
             return True
+        # A state/praise clause can contain the imperative verb as a trailing
+        # infinitive ("good job on continuing to wear ..."). It is not a new
+        # request. Keep genuine requests such as "I want you to wear ..."
+        # eligible by limiting this guard to praise/continuation/history cues.
+        if re.search(r"(?:good job|nice job|continue|continuing|keep|you said|remember)\s+(?:on\s+)?(?:continuing\s+)?to\s*$", before):
+            return True
+        if verb == 'wearing':
+            # Bare state descriptions and questions are not commands. A
+            # negated state is a correction request and remains actionable.
+            if re.search(r"\b(?:not|isn't|aren't|wasn't|weren't)\s+(?:actually\s+)?$", before):
+                return False
+            if re.search(r"(?:good job|nice job|still|already|have been|you're|you are|what are you|what is|is [^.!?]+|looks good|like that armor)\s*$", before):
+                return True
         if verb in {'wear'} and re.search(r"\bwhat\s+armor\s+are\s+you\s+$", before):
             return True
         return False

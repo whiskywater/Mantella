@@ -398,7 +398,9 @@ class Context:
                 equipment_descriptions.append(f"{character.name} has no equipped armor or weapons reported by Skyrim.")
         if not equipment_descriptions:
             return ""
-        return "Authoritative current Skyrim equipment (overrides contradictory dialogue, events, and memories): " + " ".join(equipment_descriptions)
+        return ("Authoritative shared current Skyrim equipment for every active NPC "
+                "(use this for questions about any participant; it overrides contradictory "
+                "dialogue, events, and memories): " + " ".join(equipment_descriptions))
     
     @utils.time_it
     def __get_action_texts(self, actions: list[Action]) -> str:

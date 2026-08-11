@@ -20,7 +20,7 @@ def make_equip_action() -> Action:
         False,
         "item_name",
         "npc_items",
-        ["equip", "wear", "put on"],
+        ["equip", "wear", "wearing", "put on"],
     )
 
 
@@ -186,6 +186,18 @@ def test_inventory_noun_in_equip_request_is_not_an_inventory_category_hint():
         "identifier": "mantella_npc_equip",
         "arguments": {"item_name": "best armor"},
     }]
+
+
+def test_equipment_statement_filters_contaminated_inventory_action():
+    actions = [make_inventory_action(), make_equip_action()]
+    parser = actions_parser(actions, "You're wearing the armor right now")
+    parsed, _ = parser.modify_sentence_content(
+        SentenceContent(None, "Inventory: I can open the inventory for you.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parsed.actions == []
 
 
 def test_inventory_category_filters_equip_and_barter_contamination():
@@ -372,6 +384,39 @@ def test_explicit_correction_requires_equip_again():
     }]
 
 
+@pytest.mark.parametrize("player_text", (
+    "Camilla, wear your armor.",
+    "Camilla, equip your armor.",
+    "Put on your iron boots.",
+    "Draw your sword.",
+    "Ready your weapon.",
+    "You didn't put the boots on.",
+    "You're not actually wearing the armor.",
+    "That didn't equip; try again.",
+    "No, I meant the iron armor.",
+    "Put those boots back on.",
+))
+def test_clear_equip_requests_create_obligations(player_text):
+    assert missing_required_equip(player_text)
+
+
+@pytest.mark.parametrize("player_text", (
+    "Good job wearing your armor.",
+    "Camilla good job on continuing to wear your armor.",
+    "I see you're wearing your armor.",
+    "You're still wearing the boots.",
+    "Camilla looks good in armor.",
+    "What are you wearing?",
+    "Is Camilla wearing armor?",
+    "Uthgerd, what is Camilla wearing?",
+    "I like that armor you're wearing.",
+    "You have been wearing that all day.",
+    "Keep telling me about your armor.",
+))
+def test_equipment_observations_do_not_create_equip_obligations(player_text):
+    assert missing_required_equip(player_text) == []
+
+
 def test_repeated_current_request_creates_independent_obligation():
     first = missing_required_equip("Equip the shield.")
     second = missing_required_equip("Equip the shield.")
@@ -504,6 +549,65 @@ def test_structured_equip_uses_bound_target_and_preserves_source():
         "item_name": "best armor",
     }
     assert parser.get_missing_required_actions()[0] == []
+
+
+def test_multinpc_fallback_keeps_addressed_actor_when_model_speaker_changes():
+    parser = actions_parser(
+        [make_equip_action()],
+        "Camilla equip your armor now",
+        {},
+        ["Camilla Valerius", "Uthgerd the Unbroken"],
+    )
+    parser.modify_sentence_content(
+        SentenceContent(SimpleNamespace(name="Uthgerd the Unbroken"), "I already did.", SentenceTypeEnum.SPEECH),
+        None,
+        sentence_generation_settings(None),
+    )
+
+    assert parser.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor", "source": "Camilla Valerius"},
+    }]
+
+
+def test_multinpc_obligations_keep_distinct_addressed_actors():
+    parser = actions_parser(
+        [make_equip_action()],
+        "Camilla, equip your armor. Uthgerd, equip your weapon.",
+        {},
+        ["Camilla Valerius", "Uthgerd the Unbroken"],
+    )
+
+    missing = parser.get_missing_required_actions()[0]
+    assert missing == [
+        {
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": "best armor", "source": "Camilla Valerius"},
+        },
+        {
+            "identifier": "mantella_npc_equip",
+            "arguments": {"item_name": "best weapon", "source": "Uthgerd the Unbroken"},
+        },
+    ]
+
+
+def test_multinpc_emitted_action_cannot_replace_bound_actor():
+    parser = actions_parser(
+        [make_equip_action()],
+        "Camilla, equip your armor.",
+        {},
+        ["Camilla Valerius", "Uthgerd the Unbroken"],
+    )
+    structured = {
+        "identifier": "mantella_npc_equip",
+        "arguments": {"source": "Uthgerd the Unbroken", "item_name": "Iron Armor"},
+    }
+
+    assert parser.mark_actions_triggered([structured]) == []
+    assert parser.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor", "source": "Camilla Valerius"},
+    }]
 
 
 def test_inventory_and_generic_equip_preserve_both_with_runtime_target():

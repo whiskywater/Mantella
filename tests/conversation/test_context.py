@@ -35,7 +35,7 @@ def test_multi_npc_equip_prompt_requires_named_current_action(default_config: Co
 def test_current_skyrim_equipment_is_marked_authoritative(default_context: Context):
     prompt = default_context.generate_system_message("{equipment}\n{conversation_summaries}", [])
 
-    assert "Authoritative current Skyrim equipment" in prompt
+    assert "Authoritative shared current Skyrim equipment for every active NPC" in prompt
     assert "overrides contradictory dialogue, events, and memories" in prompt
     assert "Guard wears" in prompt
 

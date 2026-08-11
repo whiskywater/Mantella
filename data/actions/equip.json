@@ -8,6 +8,7 @@
     "legacy_action_hints": [
         "equip",
         "wear",
+        "wearing",
         "put on",
         "wield",
         "draw",

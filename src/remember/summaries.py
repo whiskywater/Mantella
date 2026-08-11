@@ -20,7 +20,9 @@ logger = utils.get_logger()
 TRANSIENT_STATE_SUMMARY_RULE = (
     "Do not record inventory contents, currently worn/equipped items, or whether an equip attempt "
     "succeeded in long-term memory. Those facts are transient and are supplied authoritatively by "
-    "the game at runtime; dialogue claims about them are not evidence."
+    "the game at runtime; dialogue claims about them are not evidence. Preserve relevant emotional "
+    "or narrative consequences, but treat historical equipment claims as past narrative only, "
+    "never as the NPC's current equipment."
 )
 
 
