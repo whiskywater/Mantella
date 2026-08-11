@@ -476,6 +476,16 @@ class Context:
         else:
             self.__prev_game_time = None, time_group
         conversation_summaries = self.__rememberer.get_prompt_text(non_player_chars, self.__world_id)
+        if conversation_summaries:
+            # Summaries preserve narrative continuity, but they can contain
+            # obsolete dialogue about transient equipment. Make that temporal
+            # boundary explicit wherever a configured prompt inserts history.
+            conversation_summaries = (
+                "[Historical memory only: any inventory or equipment claims below are past "
+                "narrative, not evidence of what anyone is currently wearing or using. "
+                "Use the authoritative current Skyrim equipment above for every present-state "
+                "question.]\n" + conversation_summaries
+            )
         
         # Only include legacy action prompts if advanced actions are disabled
         actions = self.__get_action_texts(actions_for_prompt) if not self.__config.advanced_actions_enabled else ""

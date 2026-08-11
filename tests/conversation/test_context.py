@@ -2,6 +2,7 @@ from src.conversation.context import Context
 from src.config.config_loader import ConfigLoader
 from src.character_manager import Character
 from src.actions.function_manager import FunctionManager
+from unittest.mock import MagicMock
 
 
 def get_equip_action():
@@ -38,6 +39,17 @@ def test_current_skyrim_equipment_is_marked_authoritative(default_context: Conte
     assert "Authoritative shared current Skyrim equipment for every active NPC" in prompt
     assert "overrides contradictory dialogue, events, and memories" in prompt
     assert "Guard wears" in prompt
+
+
+def test_historical_equipment_claims_are_explicitly_non_authoritative(default_context: Context):
+    default_context._Context__rememberer = MagicMock()
+    default_context._Context__rememberer.get_prompt_text.return_value = "Guard remembers wearing a tunic."
+
+    prompt = default_context.generate_system_message("{equipment}\n{conversation_summaries}", [])
+
+    assert "Historical memory only" in prompt
+    assert "not evidence of what anyone is currently wearing or using" in prompt
+    assert "Guard remembers wearing a tunic." in prompt
 
 def test_context_generates_prompt_without_actions_when_advanced_enabled(default_config: ConfigLoader, default_context: Context):
     """
