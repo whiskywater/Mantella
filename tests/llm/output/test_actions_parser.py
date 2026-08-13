@@ -890,7 +890,7 @@ def test_compound_inventory_and_equip_create_ordered_obligations():
     ]
 
 
-@pytest.mark.parametrize("request", (
+@pytest.mark.parametrize("player_request", (
     "Give me more lore on your family.",
     "Give me your opinion.",
     "Give me an explanation.",
@@ -900,12 +900,12 @@ def test_compound_inventory_and_equip_create_ordered_obligations():
     "Give me a reason.",
     "Tell me about your family.",
 ))
-def test_conversational_give_phrases_do_not_create_inventory_obligations(request):
-    parser = actions_parser([make_inventory_action()], request)
+def test_conversational_give_phrases_do_not_create_inventory_obligations(player_request):
+    parser = actions_parser([make_inventory_action()], player_request)
     assert parser.get_missing_required_actions()[0] == []
 
 
-@pytest.mark.parametrize("request", (
+@pytest.mark.parametrize("player_request", (
     "Give me your sword.",
     "Give me the potion.",
     "Give me 100 gold.",
@@ -915,8 +915,8 @@ def test_conversational_give_phrases_do_not_create_inventory_obligations(request
     "Take this armor from me.",
     "Trade items with me.",
 ))
-def test_item_transfer_and_explicit_inventory_requests_create_inventory_obligations(request):
-    parser = actions_parser([make_inventory_action()], request)
+def test_item_transfer_and_explicit_inventory_requests_create_inventory_obligations(player_request):
+    parser = actions_parser([make_inventory_action()], player_request)
     assert parser.get_missing_required_actions()[0] == [{
         "identifier": "mantella_npc_inventory",
         "arguments": {},

@@ -293,7 +293,7 @@ class actions_parser(output_parser):
 
     def __has_inventory_request(self, request: str) -> bool:
         if re.search(
-            r"\b(?:check|show|open|look\s+at|view)\s+(?:your\s+)?inventory\b|"
+            r"\b(?:check|show|open|look\s+at|view)\s+(?:me\s+)?(?:your\s+)?inventory\b|"
             r"\b(?:what\s+you(?:'re| are)\s+carrying|what\s+is\s+in\s+your\s+inventory)\b|"
             r"\btrade\s+(?:items?|goods?)\b",
             request,
