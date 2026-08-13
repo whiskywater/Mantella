@@ -384,15 +384,23 @@ class Context:
     
     @utils.time_it
     def __get_npc_equipment_text(self) -> str:
-        """Gets the equipment description of all npcs in the conversation
+        """Gets authoritative live equipment for all NPCs in the conversation.
 
         Returns:
             str: the equipment descriptions concatenated together into a single string
         """
         equipment_descriptions = []
         for character in self.__npcs_in_conversation.get_non_player_characters():
-                equipment_descriptions.append(character.equipment.get_equipment_description(character.name))
-        return " ".join(equipment_descriptions)
+            description = character.equipment.get_equipment_description(character.name)
+            if description:
+                equipment_descriptions.append(description)
+            else:
+                equipment_descriptions.append(f"{character.name} has no equipped armor or weapons reported by Skyrim.")
+        if not equipment_descriptions:
+            return ""
+        return ("Authoritative shared current Skyrim equipment for every active NPC "
+                "(use this for questions about any participant; it overrides contradictory "
+                "dialogue, events, and memories): " + " ".join(equipment_descriptions))
     
     @utils.time_it
     def __get_action_texts(self, actions: list[Action]) -> str:
@@ -468,6 +476,16 @@ class Context:
         else:
             self.__prev_game_time = None, time_group
         conversation_summaries = self.__rememberer.get_prompt_text(non_player_chars, self.__world_id)
+        if conversation_summaries:
+            # Summaries preserve narrative continuity, but they can contain
+            # obsolete dialogue about transient equipment. Make that temporal
+            # boundary explicit wherever a configured prompt inserts history.
+            conversation_summaries = (
+                "[Historical memory only: any inventory or equipment claims below are past "
+                "narrative, not evidence of what anyone is currently wearing or using. "
+                "Use the authoritative current Skyrim equipment above for every present-state "
+                "question.]\n" + conversation_summaries
+            )
         
         # Only include legacy action prompts if advanced actions are disabled
         actions = self.__get_action_texts(actions_for_prompt) if not self.__config.advanced_actions_enabled else ""

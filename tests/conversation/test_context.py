@@ -1,6 +1,55 @@
 from src.conversation.context import Context
 from src.config.config_loader import ConfigLoader
 from src.character_manager import Character
+from src.actions.function_manager import FunctionManager
+from unittest.mock import MagicMock
+
+
+def get_equip_action():
+    FunctionManager.load_all_actions()
+    return next(action for action in FunctionManager.get_legacy_actions()
+                if action.identifier == "mantella_npc_equip")
+
+
+def test_single_npc_equip_prompt_requires_current_action(default_config: ConfigLoader, default_context: Context):
+    default_config.advanced_actions_enabled = False
+    prompt = default_context.generate_system_message(default_config.prompt, [get_equip_action()])
+
+    assert "For one NPC use 'Equip: <item_name> | <dialogue>'" in prompt
+    assert "if agreeing, invoke Equip again in the CURRENT response" in prompt
+    assert "passive equipment events do not authorize Equip" in prompt
+
+
+def test_multi_npc_equip_prompt_requires_named_current_action(default_config: ConfigLoader, default_context: Context,
+                                                              another_example_skyrim_npc_character: Character):
+    default_config.advanced_actions_enabled = False
+    all_characters = default_context.npcs_in_conversation.get_all_characters() + [another_example_skyrim_npc_character]
+    default_context.add_or_update_characters(all_characters, message_count=0)
+
+    prompt = default_context.generate_system_message(default_config.multi_npc_prompt, [get_equip_action()])
+
+    assert "'<full NPC name>: Equip: <item_name> | <dialogue>'" in prompt
+    assert "if agreeing, invoke Equip again in the CURRENT response" in prompt
+    assert "Past dialogue, history, and passive equipment events do not authorize Equip" in prompt
+
+
+def test_current_skyrim_equipment_is_marked_authoritative(default_context: Context):
+    prompt = default_context.generate_system_message("{equipment}\n{conversation_summaries}", [])
+
+    assert "Authoritative shared current Skyrim equipment for every active NPC" in prompt
+    assert "overrides contradictory dialogue, events, and memories" in prompt
+    assert "Guard wears" in prompt
+
+
+def test_historical_equipment_claims_are_explicitly_non_authoritative(default_context: Context):
+    default_context._Context__rememberer = MagicMock()
+    default_context._Context__rememberer.get_prompt_text.return_value = "Guard remembers wearing a tunic."
+
+    prompt = default_context.generate_system_message("{equipment}\n{conversation_summaries}", [])
+
+    assert "Historical memory only" in prompt
+    assert "not evidence of what anyone is currently wearing or using" in prompt
+    assert "Guard remembers wearing a tunic." in prompt
 
 def test_context_generates_prompt_without_actions_when_advanced_enabled(default_config: ConfigLoader, default_context: Context):
     """

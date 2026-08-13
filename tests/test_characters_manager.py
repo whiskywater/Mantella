@@ -1,6 +1,23 @@
 import pytest
+from copy import copy
 from src.characters_manager import Characters
 from src.character_manager import Character
+from src.games.equipment import Equipment, EquipmentItem
+
+
+def test_character_update_replaces_stale_equipment(example_skyrim_npc_character: Character):
+    chars = Characters()
+    chars.add_or_update_character(example_skyrim_npc_character)
+
+    refreshed_character = copy(example_skyrim_npc_character)
+    refreshed_character.equipment = Equipment({
+        Equipment.BODY: EquipmentItem("Belted Tunic"),
+    })
+    chars.add_or_update_character(refreshed_character)
+
+    current_character = chars.get_character_by_name(example_skyrim_npc_character.name)
+    assert current_character.equipment.get_equipment_description(current_character.name) == \
+        f"{current_character.name} wears Belted Tunic."
 
 
 class TestNearbyNPCs:

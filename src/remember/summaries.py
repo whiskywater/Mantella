@@ -17,6 +17,14 @@ from src import utils
 
 logger = utils.get_logger()
 
+TRANSIENT_STATE_SUMMARY_RULE = (
+    "Do not record inventory contents, currently worn/equipped items, or whether an equip attempt "
+    "succeeded in long-term memory. Those facts are transient and are supplied authoritatively by "
+    "the game at runtime; dialogue claims about them are not evidence. Preserve relevant emotional "
+    "or narrative consequences, but treat historical equipment claims as past narrative only, "
+    "never as the NPC's current equipment."
+)
+
 
 class CharacterSummaryParameters:
     """Encapsulates the messages and involved characters for a single NPC's summary."""
@@ -298,6 +306,7 @@ class Summaries(Remembering):
                     races=races,
                     genders_and_races=genders_and_races
                 )
+        prompt = f"{prompt.rstrip()}\n\n{TRANSIENT_STATE_SUMMARY_RULE}"
         while True:
             try:
                 if len(npc_info.messages) >= min_messages:
@@ -353,6 +362,7 @@ class Summaries(Remembering):
                         gender=npc_gender,
                         race=npc_race
                     )
+                    prompt = f"{prompt.rstrip()}\n\n{TRANSIENT_STATE_SUMMARY_RULE}"
                     long_conversation_summary = self.summarize_conversation(conversation_summaries, prompt)
                     break
                 except Exception:

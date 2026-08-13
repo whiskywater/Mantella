@@ -116,6 +116,40 @@ async def test_process_response_actions(output_manager: ChatManager, example_sky
 
 
 @pytest.mark.asyncio
+async def test_process_response_injects_omitted_explicit_equip_for_runtime_evaluation(
+    output_manager: ChatManager,
+    example_skyrim_npc_character: Character,
+    example_characters_pc_to_npc: Characters,
+    mock_queue: SentenceQueue,
+    mock_messages: message_thread,
+):
+    equip = Action(
+        "mantella_npc_equip", "Equip", "Equip", "", "", True, False,
+        True, True, False, "item_name", "npc_items", ["equip", "wear", "put on"],
+    )
+    output_manager._ChatManager__client.response_pattern = [
+        "I ", "only ", "have ", "my ", "tunic."
+    ]
+
+    await output_manager.process_response(
+        example_skyrim_npc_character,
+        mock_queue,
+        mock_messages,
+        example_characters_pc_to_npc,
+        [equip],
+        tools=None,
+        current_player_request="Please equip your armor",
+    )
+
+    sentences = get_sentence_list_from_queue(mock_queue)
+    actions = [action for sentence in sentences for action in sentence.actions]
+    assert actions == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "best armor"},
+    }]
+
+
+@pytest.mark.asyncio
 async def test_process_response_interrupt_action(output_manager: ChatManager, example_skyrim_npc_character: Character, example_characters_pc_to_npc: Characters, mock_queue: SentenceQueue, mock_messages: message_thread, mock_actions: list[Action]):
     """Test processing of actions embedded in the response that should interrupt the response"""
     output_manager._ChatManager__client.response_pattern = ["Menu: ", "Here ", "is ", "what ", "I ", "have.", "Ignore ", "this ", "part."]

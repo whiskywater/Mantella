@@ -225,7 +225,7 @@ class ChatManager:
                 and self.__config.game.base_game == GameEnum.SKYRIM)
 
     @utils.time_it
-    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None):
+    def generate_response(self, messages: message_thread, characters: Characters, blocking_queue: SentenceQueue, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None, player_equip_targets: dict[str, str] | None = None):
         """Starts generating responses by the LLM for the current state of the input messages
 
         Args:
@@ -239,7 +239,7 @@ class ChatManager:
             return
         self.__is_generating = True
         
-        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game))
+        asyncio.run(self.process_response(characters.last_added_character, blocking_queue, messages, characters, actions, tools, game, current_player_request, player_equip_targets))
     
     @utils.time_it
     def stop_generation(self):
@@ -277,7 +277,7 @@ class ChatManager:
             messages.add_message(tool_result_message)
     
     @utils.time_it
-    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None):
+    async def process_response(self, active_character: Character, blocking_queue: SentenceQueue, messages : message_thread, characters: Characters, actions: list[Action], tools: list[dict] | None, game: Gameable | None = None, current_player_request: str | None = None, player_equip_targets: dict[str, str] | None = None):
         """Stream response from LLM one sentence at a time"""
         with create_span_from_thread("process_response") as span:
             span.set_attribute("active_character.name", active_character.name)
@@ -294,6 +294,8 @@ class ChatManager:
             max_retries = 5
             retries = 0
 
+            participant_names = [character.name for character in characters.get_non_player_characters()]
+            legacy_actions_parser = actions_parser(actions, current_player_request, player_equip_targets, participant_names)
             parser_chain: list[output_parser] = [
                 change_character_parser(characters, actions),
                 italics_parser()]
@@ -302,7 +304,7 @@ class ChatManager:
                                                     self.__config.speech_start_indicators, self.__config.speech_end_indicators))
             parser_chain.extend([
                 sentence_end_parser(),
-                actions_parser(actions),
+                legacy_actions_parser,
                 sentence_length_parser(self.__config.number_words_tts),
                 max_count_sentences_parser(max_response_sentences, not characters.contains_player_character(), self.__config.narration_handling == NarrationHandlingEnum.CUT_NARRATIONS)
             ])
@@ -362,6 +364,7 @@ class ChatManager:
                                     
                                     # Parse tool calls
                                     parsed_tools = FunctionManager.parse_function_calls(collected_tool_calls, characters, game)
+                                    parsed_tools = legacy_actions_parser.mark_actions_triggered(parsed_tools, active_character)
                                     
                                     # Check if vision was requested - filter it out from game actions
                                     vision_requested = any(
@@ -514,6 +517,18 @@ class ChatManager:
                     if not self.__config.narration_handling == NarrationHandlingEnum.CUT_NARRATIONS or pending_sentence.sentence_type != SentenceTypeEnum.NARRATION:
                         new_sentence = self.generate_sentence(pending_sentence)
                         blocking_queue.put(new_sentence)
+                if has_text_response:
+                    missing_actions, obligation_speaker = legacy_actions_parser.get_missing_required_actions()
+                    if missing_actions:
+                        logger.warning(f"LLM omitted required current-turn action(s); invoking runtime evaluation: {missing_actions}")
+                        action_content = SentenceContent(
+                            obligation_speaker or active_character,
+                            "",
+                            SentenceTypeEnum.SPEECH,
+                            True,
+                            missing_actions,
+                        )
+                        blocking_queue.put(Sentence(action_content, "", 0))
                 logger.log(23, f"Full raw response ({active_client.get_count_tokens(raw_response)} tokens): {raw_response.strip()}")
                 blocking_queue.is_more_to_come = False
                 # This sentence is required to make sure there is one in case the game is already waiting for it
