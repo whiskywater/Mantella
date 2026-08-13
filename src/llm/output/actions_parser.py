@@ -292,12 +292,47 @@ class actions_parser(output_parser):
         return latest_name or self.__requested_actor_name
 
     def __has_inventory_request(self, request: str) -> bool:
-        return bool(re.search(
+        if re.search(
             r"\b(?:check|show|open|look\s+at|view)\s+(?:your\s+)?inventory\b|"
-            r"\b(?:give\s+me|give\s+you|take\s+from)\b",
+            r"\b(?:what\s+you(?:'re| are)\s+carrying|what\s+is\s+in\s+your\s+inventory)\b|"
+            r"\btrade\s+(?:items?|goods?)\b",
             request,
             re.IGNORECASE,
-        ))
+        ):
+            return True
+
+        # Transfer verbs are only inventory obligations when their object is
+        # plausibly an item/object.  Conversational objects ("lore", "advice",
+        # "opinion", etc.) must remain ordinary dialogue.  Keep this semantic
+        # guard deliberately local to the current player request; it does not
+        # infer actions from history, events, or model output.
+        discourse_objects = {
+            'lore', 'opinion', 'explanation', 'reason', 'advice', 'moment',
+            'details', 'thoughts', 'information', 'story', 'answer', 'family',
+        }
+        transfer = re.search(
+            r"\b(?:give\s+(?:me|you)|take)\s+(?P<object>[^.!?,]+?)(?:\s+from\s+(?:me|you|her|him|them))?(?:\s*[.!?,]|$)",
+            request,
+            re.IGNORECASE,
+        )
+        if not transfer:
+            return False
+        object_text = utils.clean_text(transfer.group('object'))
+        if not object_text:
+            return False
+        words = object_text.split()
+        if any(word in discourse_objects for word in words):
+            return False
+        # A bare transfer pronoun is valid only when this same request grounds
+        # it in an item/object reference (e.g. "the shield ... give it to me").
+        if words[-1:] in (['it'], ['that'], ['this'], ['one']):
+            prior = request[:transfer.start('object')]
+            return bool(re.search(
+                r"\b(?:sword|weapon|armor|armour|shield|potion|gold|item|gear|helmet|boots|gauntlets|bow|mace|axe|dagger|food|book|key)\b",
+                prior,
+                re.IGNORECASE,
+            ))
+        return True
 
     def __is_non_command_equip(self, request: str, match: re.Match) -> bool:
         before = request[max(0, match.start() - 48):match.start()].lower()

@@ -890,6 +890,39 @@ def test_compound_inventory_and_equip_create_ordered_obligations():
     ]
 
 
+@pytest.mark.parametrize("request", (
+    "Give me more lore on your family.",
+    "Give me your opinion.",
+    "Give me an explanation.",
+    "Give me some advice.",
+    "Give me more details.",
+    "Give me your thoughts.",
+    "Give me a reason.",
+    "Tell me about your family.",
+))
+def test_conversational_give_phrases_do_not_create_inventory_obligations(request):
+    parser = actions_parser([make_inventory_action()], request)
+    assert parser.get_missing_required_actions()[0] == []
+
+
+@pytest.mark.parametrize("request", (
+    "Give me your sword.",
+    "Give me the potion.",
+    "Give me 100 gold.",
+    "Show me your inventory.",
+    "Let me see what you're carrying.",
+    "I want to give you this shield.",
+    "Take this armor from me.",
+    "Trade items with me.",
+))
+def test_item_transfer_and_explicit_inventory_requests_create_inventory_obligations(request):
+    parser = actions_parser([make_inventory_action()], request)
+    assert parser.get_missing_required_actions()[0] == [{
+        "identifier": "mantella_npc_inventory",
+        "arguments": {},
+    }]
+
+
 def test_unrelated_model_argument_cannot_replace_compound_explicit_target():
     parser = actions_parser([make_equip_action()], "Please equip the iron armor for your chest.")
     parsed, _ = parser.modify_sentence_content(
