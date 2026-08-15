@@ -1,0 +1,22 @@
+{
+    "identifier": "mantella_npc_equip",
+    "name": "Equip",
+    "description": "Make an NPC equip armor, clothing, ammunition, or a weapon they actually own.",
+    "key": "Equip",
+    "legacy_argument": "item_name",
+    "legacy_action_group": "npc_items",
+    "legacy_action_hints": ["equip", "wear", "wearing", "put on", "wield", "draw", "ready"],
+    "parameters": {
+        "source": {"type": "string", "description": "The NPC who should equip the item.", "scope": "conversation"},
+        "item_name": {"type": "string", "description": "The item to equip.", "default": "best armor"}
+    },
+    "required": ["source"],
+    "prompt": "Only invoke Equip when the player's CURRENT request explicitly asks to equip, wear, draw, or ready something.",
+    "allowed_games": ["skyrim"],
+    "requires_response": true,
+    "is-interrupting": false,
+    "allow_repeat": true,
+    "one-on-one": true,
+    "multi-npc": true,
+    "radiant": false
+}

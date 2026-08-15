@@ -1,5 +1,7 @@
 from enum import Enum
 from threading import Thread, Lock
+from copy import deepcopy
+from itertools import count
 import time
 from typing import Any
 from src.llm.ai_client import AIClient
@@ -22,8 +24,10 @@ from src.http.communication_constants import communication_constants as comm_con
 from src.stt.stt import Transcriber
 import src.utils as utils
 from src.actions.function_manager import FunctionManager
+from src.actions.action_authorization import ActionAuthorizationContext
 
 logger = utils.get_logger()
+_DIALOGUE_GENERATION_IDS = count(1)
 
 
 class conversation_continue_type(Enum):
@@ -67,6 +71,18 @@ class Conversation:
         self.__sentences: SentenceQueue = SentenceQueue()
         self.__generation_thread: Thread | None = None
         self.__generation_start_lock: Lock = Lock()
+        self.__pending_conversation_type_update: bool = False
+        self.__active_generation_id: int | None = None
+        self.__action_turn_id: int = 0
+        self.__action_authorization_context = ActionAuthorizationContext.for_player_turn(
+            0,
+            "",
+            ((character.name, character.ref_id) for character in self.__context.npcs_in_conversation.get_non_player_characters()),
+            automatic_vision=bool(
+                getattr(self.__context.config, "vision_enabled", False)
+                and not FunctionManager.is_vision_action_active()
+            ),
+        )
         
         # Set up Listen action callback to apply extended pause to STT
         if stt:
@@ -97,6 +113,9 @@ class Conversation:
     @property
     def stt(self) -> Transcriber | None:
         return self.__stt
+
+    def __clear_sentence_queue(self, reason: str) -> None:
+        self.__sentences.clear()
     
     @utils.time_it
     def add_or_update_character(self, new_character: list[Character]):
@@ -134,6 +153,10 @@ class Conversation:
         """
         if self.has_already_ended:
             return comm_consts.KEY_REPLYTYPE_ENDCONVERSATION, None        
+        if self.__pending_conversation_type_update and (not self.__generation_thread or not self.__generation_thread.is_alive()):
+            self.__update_conversation_type()
+            self.__pending_conversation_type_update = False
+            self.__context.have_actors_changed = False
         if self.__llm_client.is_too_long(self.__messages, self.TOKEN_LIMIT_PERCENT):
             # Check if conversation too long and if yes initiate intermittent reload
             self.__initiate_reload_conversation()
@@ -154,6 +177,7 @@ class Conversation:
         if next_sentence and len(next_sentence.text.strip()) == 0 and len(next_sentence.actions) > 0:
             if FunctionManager.any_action_requires_response(next_sentence.actions):
                 self.__awaiting_action_result = True
+            self.__output_manager.mark_actions_protocol_dispatched(next_sentence.actions, next_sentence.speaker.ref_id)
             return comm_consts.KEY_REPLYTYPE_NPCACTION, next_sentence
         elif next_sentence and len(next_sentence.text) > 0:
             if {'identifier': comm_consts.ACTION_REMOVECHARACTER} in next_sentence.actions:
@@ -217,7 +241,7 @@ class Conversation:
         process_player_input), keeping the silence gap between the old and new voiceline short
         """
         self.__stop_generation()
-        self.__sentences.clear()
+        self.__clear_sentence_queue("player_interruption")
         self.__is_player_interrupting = True
         # the interrupted line's estimated duration no longer applies
         self.last_sentence_audio_length = 0
@@ -241,7 +265,7 @@ class Conversation:
 
         with self.__generation_start_lock: #This lock makes sure no new generation by the LLM is started while we clear this
             self.__stop_generation() # Stop generation of additional sentences right now
-            self.__sentences.clear() # Clear any remaining sentences from the list
+            self.__clear_sentence_queue("player_input")
 
             # If the player's input does not already exist, parse mic input if mic is enabled
             if self.__mic_input and len(player_text) == 0:
@@ -294,10 +318,41 @@ class Conversation:
             # so stop any Python-side streamed playback still playing.
             self.__output_manager.stop_external_playback()
 
+            if self.__context.have_actors_changed:
+                self.__context.clear_recent_equip_items()
             new_message: UserMessage = UserMessage(self.__context.config, player_text, player_character.name, False)
             new_message.is_multi_npc_message = self.__context.npcs_in_conversation.contains_multiple_npcs()
             new_message = self.update_game_events(new_message)
             self.__messages.add_message(new_message)
+            self.__action_turn_id += 1
+            # Consume and persist this turn's authoritative events before
+            # taking the immutable authorization snapshot.
+            recent_equip_items_by_actor = {
+                str(character.ref_id): self.__context.get_recent_equip_items(str(character.ref_id))
+                for character in self.__context.npcs_in_conversation.get_non_player_characters()
+            }
+            unresolved_actions = self.__output_manager.consume_missing_requested_actions()
+            # Anaphoric corrective authorization is valid for exactly this
+            # immediate next turn and is suppressed across participant churn.
+            if self.__context.have_actors_changed:
+                unresolved_actions = frozenset()
+            self.__action_authorization_context = ActionAuthorizationContext.for_player_turn(
+                self.__action_turn_id,
+                player_text,
+                ((character.name, character.ref_id) for character in self.__context.npcs_in_conversation.get_non_player_characters()),
+                automatic_vision=bool(
+                    getattr(self.__context.config, "vision_enabled", False)
+                    and not FunctionManager.is_vision_action_active()
+                ),
+                unresolved_actions=unresolved_actions,
+                recent_equip_items_by_actor=recent_equip_items_by_actor,
+                recent_equip_items=tuple(item for actor_items in recent_equip_items_by_actor.values() for item in actor_items),
+            )
+            requested_now = set(self.__action_authorization_context.requested_actions)
+            for _, actor_actions in self.__action_authorization_context.requested_actions_by_actor:
+                requested_now.update(actor_actions)
+            if "mantella_npc_equip" not in requested_now:
+                self.__context.clear_recent_equip_items()
             player_voiceline = self.__get_player_voiceline(player_character, player_text)
             text = new_message.text
             logger.log(23, f"Text passed to NPC: {text}")
@@ -309,7 +364,7 @@ class Conversation:
             new_message.is_system_generated_message = True # Flag message containing goodbye as a system message to exclude from summary
             self.initiate_end_sequence()
         else:
-            self.__start_generating_npc_sentences()
+            self.__start_generating_npc_sentences(allow_explicit_actions=True)
 
         return player_text, events_need_updating, player_voiceline
 
@@ -345,8 +400,15 @@ class Conversation:
         self.__context.update_context(location, time, custom_ingame_events, weather, npcs_nearby, custom_context_values, config_settings, game_days)
         logger.info(f"Conversation authoritative location after context update: {self.__context.location}")
         if self.__context.have_actors_changed:
-            self.__update_conversation_type()
-            self.__context.have_actors_changed = False
+            if self.__generation_thread and self.__generation_thread.is_alive():
+                # Keep an accepted player turn isolated from a concurrent
+                # participant refresh. The prompt/type update is applied once
+                # this generation has completed.
+                self.__pending_conversation_type_update = True
+                logger.info("Participant refresh deferred until active dialogue generation completes")
+            else:
+                self.__update_conversation_type()
+                self.__context.have_actors_changed = False
             self.__context.clear_location_changed()
         elif self.__context.location_changed:
             # Keep the large system prompt stable for prefix/KV reuse. The
@@ -361,7 +423,7 @@ class Conversation:
         # If the conversation can proceed for the first time, it starts and we add the system_message with the prompt
         if not self.__has_already_ended:
             self.__stop_generation()
-            self.__sentences.clear()
+            self.__clear_sentence_queue("conversation_type_update")
             
             if not self.__context.npcs_in_conversation.contains_player_character():
                 self.__conversation_type = radiant(self.__context.config)
@@ -378,10 +440,28 @@ class Conversation:
                 self.__messages.reload_message_thread(new_prompt, self.__llm_client.is_too_long, self.TOKEN_LIMIT_RELOAD_MESSAGES)
 
     @utils.time_it
-    def update_game_events(self, message: UserMessage) -> UserMessage:
+    def update_game_events(self, message: UserMessage, *, action_result: bool = False) -> UserMessage:
         """Add in-game events to player's response"""
 
         all_ingame_events = self.__context.get_context_ingame_events()
+        self.__context.remember_recent_equip_transfers(all_ingame_events)
+        if all_ingame_events:
+            state_only_markers = (
+                "authoritative skyrim inventory",
+                "inventory opened",
+                "current equipment has been refreshed",
+                "equipped the best available",
+                "could not equip",
+            )
+            all_ingame_events = [
+                (
+                    "AUTHORITATIVE ACTION RESULT (STATE ONLY: use for resolving the player's CURRENT "
+                    "item/action request; do not volunteer, enumerate, quote, or repeat this data as dialogue): " + event
+                )
+                if action_result or any(marker in event.casefold() for marker in state_only_markers)
+                else event
+                for event in all_ingame_events
+            ]
         if self.__output_manager.discarded_character_name:
             discarded = self.__output_manager.discarded_character_name
             npc_names = [c.name for c in self.__context.npcs_in_conversation.get_non_player_characters()]
@@ -422,10 +502,13 @@ class Conversation:
         player_name = player_character.name if player_character else ""
         synthetic_message = UserMessage(self.__context.config, "", player_name, True)
         synthetic_message.is_multi_npc_message = self.__context.npcs_in_conversation.contains_multiple_npcs()
-        synthetic_message = self.update_game_events(synthetic_message)
+        synthetic_message = self.update_game_events(synthetic_message, action_result=True)
         self.__messages.add_message(synthetic_message)
+        for actor_ref_id in self.__output_manager.dispatched_actor_refs_for("mantella_npc_equip"):
+            self.__context.clear_recent_equip_items(actor_ref_id)
+        self.__output_manager.mark_action_result_received()
 
-        self.__sentences.clear()
+        self.__clear_sentence_queue("events_refresh")
         self.__awaiting_action_result = False
         # Do not allow the LLM to use tools a second time in a row (can cause an endless loop)
         self.__start_generating_npc_sentences(allow_tool_use=False)
@@ -461,7 +544,7 @@ class Conversation:
         if not self.__has_already_ended:
             config = self.__context.config            
             self.__stop_generation()
-            self.__sentences.clear()
+            self.__clear_sentence_queue("conversation_end_sequence")
             if self.__stt:
                 self.__stt.stop_listening()
                 self.__allow_mic_input = False
@@ -494,13 +577,17 @@ class Conversation:
         Args:
             end_timestamp: Optional game timestamp (days passed as float) when conversation ends
         """
+        # A duplicate terminal request must not schedule the same detached
+        # Bug #7 summary snapshot more than once.
+        if self.__has_already_ended:
+            return
         self.__has_already_ended = True
         self.__stop_generation()
-        self.__sentences.clear()
+        self.__clear_sentence_queue("conversation_end")
         self.__save_conversation(is_reload=False, end_timestamp=end_timestamp)
     
     @utils.time_it
-    def __start_generating_npc_sentences(self, allow_tool_use: bool = True):
+    def __start_generating_npc_sentences(self, allow_tool_use: bool = True, allow_explicit_actions: bool = False):
         """Starts a background Thread to generate sentences into the SentenceQueue"""    
         with self.__generation_start_lock:
             if not self.__generation_thread or not self.__generation_thread.is_alive():
@@ -517,9 +604,34 @@ class Conversation:
                 )
                 # Capture current OpenTelemetry context for the new thread
                 opentelemetry_context = OpenTelemetryContext.get_current()
+                generation_characters = deepcopy(self.__context.npcs_in_conversation)
+                generation_action_context = (
+                    self.__action_authorization_context
+                    if allow_explicit_actions
+                    else self.__action_authorization_context.for_continuation()
+                )
+                self.__output_manager.set_action_authorization_context(generation_action_context)
+                generation_id = next(_DIALOGUE_GENERATION_IDS)
+                self.__active_generation_id = generation_id
+                logger.info(
+                    f"Dialogue generation {generation_id} started conversation={id(self)} "
+                    f"turn={self.__action_authorization_context.turn_id} "
+                    f"participants={[f'{c.name}:{c.ref_id}' for c in generation_characters.get_all_characters()]}"
+                )
                 def thread_target():
                     set_parent_context(opentelemetry_context)
-                    self.__output_manager.generate_response(self.__messages, self.__context.npcs_in_conversation, self.__sentences, self.context.config.actions, tools, self.__game)
+                    try:
+                        self.__output_manager.generate_response(
+                            self.__messages,
+                            generation_characters,
+                            self.__sentences,
+                            self.context.config.actions,
+                            tools,
+                            self.__game,
+                            generation_action_context,
+                        )
+                    finally:
+                        logger.info(f"Dialogue generation {generation_id} finished conversation={id(self)}")
                 self.__generation_thread = Thread(target=thread_target)
                 self.__generation_thread.start()
 
@@ -536,7 +648,7 @@ class Conversation:
     def __prepare_eject_npc_from_conversation(self, npc: Character):
         if not self.__has_already_ended:            
             self.__stop_generation()
-            self.__sentences.clear()            
+            self.__clear_sentence_queue("participant_removal")
             # say goodbye
             goodbye_sentence = self.__output_manager.generate_sentence(SentenceContent(npc, self.__context.config.goodbye_npc_response, SentenceTypeEnum.SPEECH, False))
             if goodbye_sentence:
@@ -574,7 +686,7 @@ class Conversation:
             end_timestamp = self.__context.game_days
 
         is_radiant = isinstance(self.__conversation_type, radiant)
-        self.__rememberer.save_conversation_state(self.__messages, npcs_to_summarize, npcs, self.__context.world_id, is_reload, pending_shares, end_timestamp, is_radiant)
+        self.__rememberer.schedule_conversation_state(self.__messages, npcs_to_summarize, npcs, self.__context.world_id, is_reload, pending_shares, end_timestamp, is_radiant)
 
     @utils.time_it
     def __initiate_reload_conversation(self):
