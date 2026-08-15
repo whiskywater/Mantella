@@ -43,6 +43,12 @@ class actions_parser(output_parser):
                     if action.legacy_argument:
                         argument_value, separator, remaining_text = action_text.partition("|")
                         argument_value = argument_value.strip()
+                        # Equip is streamed in chunks.  Do not emit the action
+                        # when only the prefix (or an incomplete payload) has
+                        # arrived; waiting for the delimiter preserves the
+                        # item name for authorization.
+                        if action.identifier == 'mantella_npc_equip' and (not separator or not argument_value):
+                            continue
                         if separator and argument_value:
                             parsed_action['arguments'] = {action.legacy_argument: argument_value}
                             cut_content.text = remaining_text.strip()

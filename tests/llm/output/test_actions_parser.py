@@ -90,11 +90,31 @@ def test_legacy_equip_carries_generic_weapon_request():
     assert parsed.actions[0]["arguments"]["item_name"] == "best weapon"
 
 
-def test_legacy_equip_without_argument_delimiter_keeps_fallback_behavior():
+def test_legacy_equip_without_argument_delimiter_is_retained_until_payload_arrives():
     parsed = parse_equip("Equip: I will get ready.")
 
     assert parsed.text == "I will get ready."
-    assert parsed.actions == [{"identifier": "mantella_npc_equip"}]
+    assert parsed.actions == []
+
+
+def test_streamed_equip_prefix_does_not_emit_before_item_payload():
+    parser = actions_parser([make_equip_action()])
+    settings = sentence_generation_settings(None)
+
+    incomplete = SentenceContent(None, "Equip:", SentenceTypeEnum.SPEECH)
+    parsed, _ = parser.modify_sentence_content(incomplete, None, settings)
+    assert parsed.actions == []
+
+    complete = SentenceContent(
+        None,
+        "Equip: Golden Saint Shield | I shall wear it.",
+        SentenceTypeEnum.SPEECH,
+    )
+    parsed, _ = parser.modify_sentence_content(complete, None, settings)
+    assert parsed.actions == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item_name": "Golden Saint Shield"},
+    }]
 
 
 def test_legacy_equip_ignores_preceding_inventory_block():
@@ -126,7 +146,7 @@ def test_legacy_equip_does_not_consume_following_action_block():
         [make_inventory_action(), make_equip_action()],
     )
 
-    assert parsed.actions[-1] == {"identifier": "mantella_npc_equip"}
+    assert parsed.actions == [{"identifier": "mantella_npc_inventory"}]
 
 
 def test_equip_category_filters_inventory_and_barter_contamination():
