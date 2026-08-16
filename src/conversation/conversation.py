@@ -1,6 +1,7 @@
 from enum import Enum
 from threading import Thread, Lock
 from copy import deepcopy
+from itertools import count
 import time
 from typing import Any
 from src.llm.ai_client import AIClient
@@ -25,6 +26,7 @@ import src.utils as utils
 from src.actions.function_manager import FunctionManager
 
 logger = utils.get_logger()
+_DIALOGUE_GENERATION_IDS = count(1)
 
 
 class conversation_continue_type(Enum):
@@ -68,6 +70,8 @@ class Conversation:
         self.__sentences: SentenceQueue = SentenceQueue()
         self.__generation_thread: Thread | None = None
         self.__generation_start_lock: Lock = Lock()
+        self.__pending_conversation_type_update: bool = False
+        self.__active_generation_id: int | None = None
         
         # Set up Listen action callback to apply extended pause to STT
         if stt:
@@ -102,7 +106,7 @@ class Conversation:
     @property
     def stt(self) -> Transcriber | None:
         return self.__stt
-    
+
     @utils.time_it
     def add_or_update_character(self, new_character: list[Character]):
         """Adds or updates a character in the conversation.
@@ -112,7 +116,7 @@ class Conversation:
         """
         characters_removed_by_update = self.__context.add_or_update_characters(new_character, len(self.__messages))
         if len(characters_removed_by_update) > 0:
-            self.__save_conversation(is_reload=True, departed_npcs=characters_removed_by_update, background=True)
+            self.__save_conversation(is_reload=True, departed_npcs=characters_removed_by_update)
 
     @utils.time_it
     def start_conversation(self) -> tuple[str, Sentence | None]:
@@ -139,6 +143,10 @@ class Conversation:
         """
         if self.has_already_ended:
             return comm_consts.KEY_REPLYTYPE_ENDCONVERSATION, None        
+        if self.__pending_conversation_type_update and (not self.__generation_thread or not self.__generation_thread.is_alive()):
+            self.__update_conversation_type()
+            self.__pending_conversation_type_update = False
+            self.__context.have_actors_changed = False
         if self.__llm_client.is_too_long(self.__messages, self.TOKEN_LIMIT_PERCENT):
             # Check if conversation too long and if yes initiate intermittent reload
             self.__initiate_reload_conversation()
@@ -164,7 +172,7 @@ class Conversation:
             if {'identifier': comm_consts.ACTION_REMOVECHARACTER} in next_sentence.actions:
                 departing_npc = next_sentence.speaker
                 self.__context.remove_character(departing_npc, len(self.__messages))
-                self.__save_conversation(is_reload=True, departed_npcs=[departing_npc], background=True)
+                self.__save_conversation(is_reload=True, departed_npcs=[departing_npc])
             #if there is a next sentence and it actually has content, return it as something for an NPC to say
             if self.last_sentence_audio_length > 0:
                 logger.debug(f'Waiting {round(self.last_sentence_audio_length, 1)} seconds for last voiceline to play')
@@ -246,7 +254,7 @@ class Conversation:
 
         with self.__generation_start_lock: #This lock makes sure no new generation by the LLM is started while we clear this
             self.__stop_generation() # Stop generation of additional sentences right now
-            self.__sentences.clear() # Clear any remaining sentences from the list
+            self.__sentences.clear()
 
             # If the player's input does not already exist, parse mic input if mic is enabled
             if self.__mic_input and len(player_text) == 0:
@@ -349,8 +357,15 @@ class Conversation:
         """
         self.__context.update_context(location, time, custom_ingame_events, weather, npcs_nearby, custom_context_values, config_settings, game_days)
         if self.__context.have_actors_changed:
-            self.__update_conversation_type()
-            self.__context.have_actors_changed = False
+            if self.__generation_thread and self.__generation_thread.is_alive():
+                # Keep an accepted player turn isolated from a concurrent
+                # participant refresh. The prompt/type update is applied once
+                # this generation has completed.
+                self.__pending_conversation_type_update = True
+                logger.info("Participant refresh deferred until active dialogue generation completes")
+            else:
+                self.__update_conversation_type()
+                self.__context.have_actors_changed = False
 
     @utils.time_it
     def __update_conversation_type(self):
@@ -488,18 +503,14 @@ class Conversation:
         Args:
             end_timestamp: Optional game timestamp (days passed as float) when conversation ends
         """
-        # End is idempotent.  A repeated end request (for example while the
-        # game is starting the next conversation) must not summarize the same
-        # transcript twice.
+        # A duplicate terminal request must not schedule the same detached
+        # Bug #7 summary snapshot more than once.
         if self.__has_already_ended:
             return
         self.__has_already_ended = True
         self.__stop_generation()
         self.__sentences.clear()
-        # Detach the closed conversation from gameplay immediately.  Summary
-        # persistence operates on an immutable snapshot so it cannot block or
-        # mutate a conversation that starts afterward.
-        self.__save_conversation(is_reload=False, end_timestamp=end_timestamp, background=True)
+        self.__save_conversation(is_reload=False, end_timestamp=end_timestamp)
     
     @utils.time_it
     def __start_generating_npc_sentences(self, allow_tool_use: bool = True, current_player_request: str | None = None):
@@ -513,9 +524,28 @@ class Conversation:
                     tools = FunctionManager.generate_context_aware_tools(self.__context, self.__game)
                 # Capture current OpenTelemetry context for the new thread
                 opentelemetry_context = OpenTelemetryContext.get_current()
+                generation_characters = deepcopy(self.__context.npcs_in_conversation)
+                generation_id = next(_DIALOGUE_GENERATION_IDS)
+                self.__active_generation_id = generation_id
+                logger.info(
+                    f"Dialogue generation {generation_id} started conversation={id(self)} "
+                    f"participants={[f'{c.name}:{c.ref_id}' for c in generation_characters.get_all_characters()]}"
+                )
                 def thread_target():
                     set_parent_context(opentelemetry_context)
-                    self.__output_manager.generate_response(self.__messages, self.__context.npcs_in_conversation, self.__sentences, self.context.config.actions, tools, self.__game, current_player_request, self.__last_player_equip_targets)
+                    try:
+                        self.__output_manager.generate_response(
+                            self.__messages,
+                            generation_characters,
+                            self.__sentences,
+                            self.context.config.actions,
+                            tools,
+                            self.__game,
+                            current_player_request,
+                            self.__last_player_equip_targets,
+                        )
+                    finally:
+                        logger.info(f"Dialogue generation {generation_id} finished conversation={id(self)}")
                 self.__generation_thread = Thread(target=thread_target)
                 self.__generation_thread.start()
 
@@ -532,7 +562,7 @@ class Conversation:
     def __prepare_eject_npc_from_conversation(self, npc: Character):
         if not self.__has_already_ended:            
             self.__stop_generation()
-            self.__sentences.clear()            
+            self.__sentences.clear()
             # say goodbye
             goodbye_sentence = self.__output_manager.generate_sentence(SentenceContent(npc, self.__context.config.goodbye_npc_response, SentenceTypeEnum.SPEECH, False))
             if goodbye_sentence:
@@ -540,39 +570,9 @@ class Conversation:
                 self.__sentences.put(goodbye_sentence)        
 
     @utils.time_it
-    def __save_conversation(self, is_reload: bool, departed_npcs: list[Character] | None = None, end_timestamp: float | None = None, background: bool = False):
+    def __save_conversation(self, is_reload: bool, departed_npcs: list[Character] | None = None, end_timestamp: float | None = None):
         """Saves conversation log and state for each NPC in the conversation"""
         npcs = self.__context.npcs_in_conversation
-
-        if background:
-            # Keep all state used by persistence owned by this conversation.
-            # In particular, do not let later participant/context updates
-            # leak into a summary started for an older lifecycle.
-            messages = message_thread(self.__context.config, None)
-            for message in self.__messages.get_talk_only(include_system_generated_messages=True):
-                messages.add_message(message)
-            npcs = deepcopy(npcs)
-            departed_names = {npc.name for npc in departed_npcs} if departed_npcs else None
-            world_id = self.__context.world_id
-            game_days = self.__context.game_days
-            is_radiant = isinstance(self.__conversation_type, radiant)
-            pending_shares = npcs.get_pending_shares() if not is_reload else None
-            if not is_reload:
-                self.__context.npcs_in_conversation.clear_pending_shares()
-            snapshot_npcs = npcs
-            if departed_names is None:
-                snapshot_targets = snapshot_npcs.get_non_player_characters()
-            else:
-                snapshot_targets = [
-                    npc for npc in snapshot_npcs.get_all_characters_since_start()
-                    if npc.name in departed_names
-                ]
-            Thread(
-                target=self.__save_conversation_snapshot,
-                args=(messages, snapshot_targets, snapshot_npcs, world_id, is_reload, pending_shares, end_timestamp if end_timestamp is not None else game_days, is_radiant),
-                daemon=True,
-            ).start()
-            return
 
         if departed_npcs is not None:
             npcs_to_summarize = departed_npcs
@@ -600,46 +600,7 @@ class Conversation:
             end_timestamp = self.__context.game_days
 
         is_radiant = isinstance(self.__conversation_type, radiant)
-        self.__rememberer.save_conversation_state(self.__messages, npcs_to_summarize, npcs, self.__context.world_id, is_reload, pending_shares, end_timestamp, is_radiant)
-
-    def __save_conversation_snapshot(
-        self,
-        messages: message_thread,
-        npcs_to_summarize: list[Character],
-        npcs_in_conversation,
-        world_id: str,
-        is_reload: bool,
-        pending_shares: list[tuple[str, str, str]] | None,
-        end_timestamp: float | None,
-        is_radiant: bool,
-    ):
-        """Persist a detached conversation snapshot without touching live state."""
-        try:
-            for npc in npcs_to_summarize:
-                conversation_log.save_conversation_log(
-                    npc,
-                    messages.transform_to_openai_messages(messages.get_talk_only()),
-                    world_id,
-                )
-
-            if not is_reload and not self.__context.config.conversation_summary_enabled:
-                logger.info("Conversation summaries disabled. Skipping summary generation.")
-                return
-
-            self.__rememberer.save_conversation_state(
-                messages,
-                npcs_to_summarize,
-                npcs_in_conversation,
-                world_id,
-                is_reload,
-                pending_shares,
-                end_timestamp,
-                is_radiant,
-            )
-        except Exception:
-            # Persistence failure must not affect the newly active gameplay
-            # conversation.  The underlying summary/client code logs details.
-            logger.exception("Detached conversation persistence failed")
+        self.__rememberer.schedule_conversation_state(self.__messages, npcs_to_summarize, npcs, self.__context.world_id, is_reload, pending_shares, end_timestamp, is_radiant)
 
     @utils.time_it
     def __initiate_reload_conversation(self):

@@ -22,7 +22,6 @@ def test_end_detaches_once_and_starts_background_persistence():
     conversation._Conversation__save_conversation.assert_called_once_with(
         is_reload=False,
         end_timestamp=None,
-        background=True,
     )
     assert conversation._Conversation__stop_generation.call_count == 1
 
@@ -44,45 +43,18 @@ class _SnapshotCharacters:
         return []
 
 
-def test_background_save_uses_detached_snapshot_and_clears_only_old_shares(monkeypatch):
+def test_summary_schedule_uses_rememberer_executor():
     conversation = Conversation.__new__(Conversation)
-    config = MagicMock(conversation_summary_enabled=True)
-    characters = _SnapshotCharacters()
-    context = MagicMock(config=config, world_id="conversation-a", game_days=12.5)
-    context.npcs_in_conversation = characters
-    conversation._Conversation__context = context
+    conversation._Conversation__context = MagicMock()
+    conversation._Conversation__context.npcs_in_conversation = _SnapshotCharacters()
+    conversation._Conversation__context.world_id = "conversation-a"
     conversation._Conversation__messages = MagicMock()
-    conversation._Conversation__messages.get_talk_only.return_value = []
     conversation._Conversation__conversation_type = MagicMock()
     conversation._Conversation__rememberer = MagicMock()
 
-    queued = {}
+    conversation._Conversation__save_conversation(is_reload=False, end_timestamp=None)
 
-    class ImmediateThread:
-        def __init__(self, target, args, daemon):
-            queued["target"] = target
-            queued["args"] = args
-            queued["daemon"] = daemon
-
-        def start(self):
-            queued["started"] = True
-
-    monkeypatch.setattr("src.conversation.conversation.Thread", ImmediateThread)
-    conversation._Conversation__save_conversation(
-        is_reload=False,
-        end_timestamp=None,
-        background=True,
-    )
-
-    assert queued["started"] is True
-    assert queued["daemon"] is True
-    assert characters.pending_shares == []
-    # Execute the detached job after the live conversation would be replaced.
-    queued["target"](*queued["args"])
-    conversation._Conversation__rememberer.save_conversation_state.assert_called_once()
-    args = conversation._Conversation__rememberer.save_conversation_state.call_args.args
-    assert args[3] == "conversation-a"
-    assert args[5] == [("A", "B", "ref-b")]
+    conversation._Conversation__rememberer.schedule_conversation_state.assert_called_once()
 
 
 def test_participant_removal_uses_detached_persistence(monkeypatch):
@@ -100,5 +72,4 @@ def test_participant_removal_uses_detached_persistence(monkeypatch):
     conversation._Conversation__save_conversation.assert_called_once_with(
         is_reload=True,
         departed_npcs=[removed],
-        background=True,
     )

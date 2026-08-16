@@ -311,6 +311,10 @@ class GameStateManager:
     
     @utils.time_it
     def sentence_to_json(self, sentence_to_prepare: Sentence, topicID: int) -> dict[str, Any]:
+        try:
+            speaker_ref_id = int(sentence_to_prepare.speaker.ref_id, 16)
+        except (TypeError, ValueError):
+            speaker_ref_id = None
         json_dict = {
             comm_consts.KEY_ACTOR_SPEAKER: sentence_to_prepare.speaker.name,
             comm_consts.KEY_ACTOR_LINETOSPEAK: self.__abbreviate_text(sentence_to_prepare.text.strip()),
@@ -320,6 +324,12 @@ class GameStateManager:
             comm_consts.KEY_ACTOR_ACTIONS: sentence_to_prepare.actions,
             comm_consts.KEY_CONTINUECONVERSATION_TOPICINFOFILE: topicID
         }
+        if speaker_ref_id is not None:
+            json_dict[comm_consts.KEY_ACTOR_REFID] = speaker_ref_id
+        logger.debug(
+            f"NPC talk payload speaker={sentence_to_prepare.speaker.name} "
+            f"ref_id={sentence_to_prepare.speaker.ref_id} serialized_ref_id={speaker_ref_id}"
+        )
 
         return json_dict
     
