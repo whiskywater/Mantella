@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,16 @@ def main() -> int:
     )
 
     package = dist / "Mantella"
+    # Mantella resolves application data relative to the distribution working
+    # directory (not PyInstaller's _internal directory). Copy tracked source
+    # data as part of the build, never from a previous/rollback installation.
+    source_data = source / "data"
+    target_data = package / "data"
+    if source_data.is_dir():
+        shutil.copytree(source_data, target_data, dirs_exist_ok=True)
+    source_custom_folder = source / "custom_user_folder.ini"
+    if source_custom_folder.is_file():
+        shutil.copy2(source_custom_folder, package / source_custom_folder.name)
     internal = package / "_internal"
     required = [package / "Mantella.exe", internal / "gradio_client", internal / "gradio" / "blocks_events.py", internal / "gradio_client" / "types.json"]
     missing = [str(path) for path in required if not path.exists()]

@@ -19,10 +19,7 @@ a = Analysis(
     [os.path.join(source_root, "main.py")],
     pathex=[source_root],
     binaries=gradio_bins + client_bins,
-    datas=gradio_datas + client_datas + [
-        (os.path.join(source_root, "data"), "data"),
-        (os.path.join(source_root, "custom_user_folder.ini"), "."),
-    ],
+    datas=gradio_datas + client_datas,
     hiddenimports=gradio_hidden + client_hidden + tk_hidden,
     hookspath=[],
     hooksconfig={},
