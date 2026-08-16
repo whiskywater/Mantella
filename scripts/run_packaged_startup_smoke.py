@@ -138,7 +138,15 @@ def main() -> int:
         _terminate(process)
         stdout_file.close(); stderr_file.close()
         output = stdout_path.read_text(errors="replace") + "\n" + stderr_path.read_text(errors="replace")
-        stdout_path.unlink(missing_ok=True); stderr_path.unlink(missing_ok=True)
+        for log_path in (stdout_path, stderr_path):
+            try:
+                log_path.unlink(missing_ok=True)
+            except PermissionError:
+                # A short-lived child may still hold an inherited handle. The
+                # process tree has already been terminated; retain the log
+                # rather than turning successful readiness into a harness
+                # crash.
+                pass
         if any(marker in output for marker in FAILURE_MARKERS):
             print(output, end="")
             success = False
