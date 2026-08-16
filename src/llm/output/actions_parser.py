@@ -47,8 +47,15 @@ class actions_parser(output_parser):
                     action_text = cut_content.text.split(keyword, 1)[1].strip()
                     cut_content.text = cut_content.text.replace(keyword, "").strip()
                     invocation = {"identifier": action.identifier}
-                    if action.identifier == "mantella_npc_equip" and action_text:
-                        invocation["arguments"] = {"item": action_text.split("|", 1)[0].strip()}
+                    if action.identifier == "mantella_npc_equip":
+                        if not action_text:
+                            continue
+                        item, separator, dialogue = action_text.partition("|")
+                        item = item.strip()
+                        if not item:
+                            continue
+                        invocation["arguments"] = {"item": item}
+                        cut_content.text = dialogue.strip() if separator else ""
                     cut_content.actions.append(invocation)
                     logger.log(28, f"Action triggered: {action.name} ({action.identifier})")
                     if action.is_interrupting:

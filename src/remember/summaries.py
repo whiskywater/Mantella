@@ -274,7 +274,13 @@ class Summaries(Remembering):
                         involved.add(other_identity)
                         break
 
-            involved_chars = [chars_by_id[ref] for ref in involved if ref in chars_by_id]
+            # Preserve stable participant/join order. Iterating the set made
+            # summary prompt identity order process-dependent and could swap
+            # same-turn participants between otherwise identical runs.
+            involved_chars = [
+                character for character in all_chars_since_start
+                if (character.ref_id or f"base:{character.base_id}:{character.name}") in involved
+            ]
             character = chars_by_id[identity]
             result[self.__summary_key(character, all_chars_since_start)] = CharacterSummaryParameters(thread, involved_chars)
 

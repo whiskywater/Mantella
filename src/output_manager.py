@@ -155,7 +155,7 @@ class ChatManager:
         if not content.actions:
             return content
         authorized: list[dict] = []
-        rejected_verification_action = False
+        rejected_action = False
         for action in content.actions:
             identifier = action.get("identifier", "")
             actor_ref_id = content.speaker.ref_id
@@ -167,11 +167,12 @@ class ChatManager:
             else:
                 lifecycle.record_rejected(identifier, actor_ref_id, reason)
                 logger.warning(f"Action rejected: {identifier} reason={reason} turn={lifecycle.context.turn_id} actor={actor_ref_id}")
-                rejected_verification_action = rejected_verification_action or identifier in verification_action_ids or FunctionManager.any_action_requires_response([action])
+                rejected_action = True
         content.actions = authorized
-        if rejected_verification_action:
-            # Fence the rest of this streamed completion after a rejected
-            # verification-dependent action so stale prose cannot reach TTS.
+        if rejected_action:
+            # An action-prefixed segment and its attached streamed prose form
+            # one state-sensitive response. Once its action is rejected, none
+            # of that segment may be downgraded into authoritative dialogue.
             settings.stop_generation = True
             return None
         if any(action.get("identifier") in verification_action_ids for action in authorized) or FunctionManager.any_action_requires_response(authorized):

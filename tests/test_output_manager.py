@@ -217,6 +217,41 @@ async def test_follow_action_remains_dispatchable_with_current_turn_authority(
 
 
 @pytest.mark.asyncio
+async def test_rejected_look_prefix_fences_attached_state_claim(
+    output_manager: ChatManager,
+    example_skyrim_npc_character: Character,
+    example_characters_pc_to_npc: Characters,
+    mock_queue: SentenceQueue,
+    mock_messages: message_thread,
+):
+    """Unauthorized action prose cannot be downgraded into ordinary TTS dialogue."""
+    look = Action(
+        identifier="mantella_npc_vision", name="Look", keyword="Look",
+        description="Inspect view", prompt_text="", requires_response=False,
+        is_interrupting=False, one_on_one=True, multi_npc=True, radiant=False,
+    )
+    output_manager._ChatManager__client.response_pattern = [
+        "Look: I can see that I am already wearing the Stormcloak Cuirass."
+    ]
+    auth = ActionAuthorizationContext.for_player_turn(
+        23,
+        "Put your clothes back on.",
+        [(example_skyrim_npc_character.name, example_skyrim_npc_character.ref_id)],
+        owned_equip_items_by_actor={example_skyrim_npc_character.ref_id: ("Roughspun Tunic",)},
+        authoritative_inventory_actor_refs={example_skyrim_npc_character.ref_id},
+    )
+    output_manager.set_action_authorization_context(auth)
+    await output_manager.process_response(
+        example_skyrim_npc_character, mock_queue, mock_messages,
+        example_characters_pc_to_npc, [look], tools=None, action_context=auth,
+    )
+
+    sentences = get_sentence_list_from_queue(mock_queue)
+    assert not any(sentence.text.strip() for sentence in sentences)
+    assert not any(sentence.actions for sentence in sentences)
+
+
+@pytest.mark.asyncio
 async def test_requires_response_action_does_not_speak_unverified_trailing_dialogue(
     output_manager: ChatManager,
     example_skyrim_npc_character: Character,
@@ -503,7 +538,7 @@ async def test_rejected_inventory_continuation_discards_inventory_prose(
 
 
 @pytest.mark.asyncio
-async def test_process_response_injects_omitted_explicit_equip_for_runtime_evaluation(
+async def test_omitted_equip_is_not_synthetically_injected_from_plain_dialogue(
     output_manager: ChatManager,
     example_skyrim_npc_character: Character,
     example_characters_pc_to_npc: Characters,
@@ -518,6 +553,13 @@ async def test_process_response_injects_omitted_explicit_equip_for_runtime_evalu
         "I ", "only ", "have ", "my ", "tunic."
     ]
 
+    auth = ActionAuthorizationContext.for_player_turn(
+        24,
+        "Please equip your armor",
+        [(example_skyrim_npc_character.name, example_skyrim_npc_character.ref_id)],
+        owned_equip_items_by_actor={example_skyrim_npc_character.ref_id: ("Roughspun Tunic",)},
+    )
+    output_manager.set_action_authorization_context(auth)
     await output_manager.process_response(
         example_skyrim_npc_character,
         mock_queue,
@@ -525,15 +567,13 @@ async def test_process_response_injects_omitted_explicit_equip_for_runtime_evalu
         example_characters_pc_to_npc,
         [equip],
         tools=None,
-        current_player_request="Please equip your armor",
+        action_context=auth,
     )
 
     sentences = get_sentence_list_from_queue(mock_queue)
     actions = [action for sentence in sentences for action in sentence.actions]
-    assert actions == [{
-        "identifier": "mantella_npc_equip",
-        "arguments": {"item_name": "best armor"},
-    }]
+    assert actions == []
+    assert output_manager.active_action_lifecycle.correction_attempted is True
 
 
 @pytest.mark.asyncio

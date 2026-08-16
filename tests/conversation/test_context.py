@@ -53,6 +53,46 @@ def test_historical_equipment_claims_are_explicitly_non_authoritative(default_co
     assert "not evidence of what anyone is currently wearing or using" in prompt
     assert "Guard remembers wearing a tunic." in prompt
 
+
+def test_newer_transfer_event_invalidates_removed_authoritative_equipment(default_context: Context):
+    """A player-took event must outrank the older equipped-item snapshot."""
+    before = default_context.get_authoritative_current_state_event()
+    assert "Iron Armor" in before and "Iron Sword" in before
+
+    default_context.update_context(
+        default_context.location,
+        12,
+        [
+            "Prisoner picked up/took Iron Armor from Guard",
+            "Prisoner picked up/took Iron Sword from Guard",
+        ],
+        None,
+        None,
+        {},
+        None,
+    )
+
+    after = default_context.get_authoritative_current_state_event()
+    assert "Iron Armor" not in after
+    assert "Iron Sword" not in after
+    assert "Iron Boots" in after
+
+
+def test_authoritative_inventory_survives_transient_event_clear(default_context: Context):
+    default_context.update_context(
+        default_context.location,
+        12,
+        ["Authoritative Skyrim inventory for Guard at action time: Roughspun Tunic, Iron Boots."],
+        None,
+        None,
+        {},
+        None,
+    )
+    default_context.clear_context_ingame_events()
+
+    assert default_context.has_authoritative_inventory("0")
+    assert "Roughspun Tunic" in default_context.get_known_owned_equip_items("0")
+
 def test_context_generates_prompt_without_actions_when_advanced_enabled(default_config: ConfigLoader, default_context: Context):
     """
     Tests that Context.generate_system_message returns empty actions placeholder when advanced actions are enabled

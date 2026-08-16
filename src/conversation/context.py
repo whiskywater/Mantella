@@ -37,6 +37,8 @@ class Context:
         self.__game_days: float = 1.0  # Full game timestamp (days.fraction)
         self.__ingame_events: list[str] = []
         self.__recent_equip_items_by_actor: dict[str, list[str]] = {}
+        self.__authoritative_inventory_items_by_actor: dict[str, list[str]] = {}
+        self.__authoritative_inventory_actor_refs: set[str] = set()
         self.__vision_hints: str = ''
         self.__have_actors_changed: bool = False
         self.__game: GameEnum = config.game
@@ -169,37 +171,97 @@ class Context:
         """Return immediate authoritative transfer referents for one stable actor."""
         return tuple(self.__recent_equip_items_by_actor.get(str(actor_ref_id), []))
 
+    def get_known_owned_equip_items(self, actor_ref_id: str) -> tuple[str, ...]:
+        """Snapshot currently owned/equipped items known for one stable actor."""
+        ref_id = str(actor_ref_id)
+        items = list(self.__authoritative_inventory_items_by_actor.get(ref_id, ()))
+        actor = self.__npcs_in_conversation.get_character_by_ref_id(ref_id)
+        if actor:
+            items.extend(actor.equipment.item_names())
+        items.extend(self.__recent_equip_items_by_actor.get(ref_id, ()))
+        return tuple(dict.fromkeys(item for item in items if item))
+
+    def has_authoritative_inventory(self, actor_ref_id: str) -> bool:
+        return str(actor_ref_id) in self.__authoritative_inventory_actor_refs
+
     def clear_recent_equip_items(self, actor_ref_id: str | None = None) -> None:
         if actor_ref_id is None:
             self.__recent_equip_items_by_actor.clear()
         else:
             self.__recent_equip_items_by_actor.pop(str(actor_ref_id), None)
 
-    def remember_recent_equip_transfers(self, events: list[str] | tuple[str, ...] | None) -> None:
-        """Persist authoritative transfers independently of the prompt event buffer."""
+    @staticmethod
+    def __parse_inventory_items(raw_items: str) -> list[str]:
+        value = raw_items.strip().rstrip(".")
+        value = re.sub(r",?\s+and\s+", ", ", value, flags=re.IGNORECASE)
+        result: list[str] = []
+        for raw_item in value.split(","):
+            item = re.sub(r"\s+x\d+\s*$", "", raw_item.strip(), flags=re.IGNORECASE)
+            if item and item.casefold() not in {"nothing", "empty"}:
+                result.append(item)
+        return list(dict.fromkeys(result))
+
+    def __unique_npc(self, display_name: str) -> Character | None:
+        matches = [
+            actor for actor in self.__npcs_in_conversation.get_non_player_characters()
+            if actor.name.casefold() == display_name.strip().casefold()
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def remember_authoritative_item_state(self, events: list[str] | tuple[str, ...] | None) -> None:
+        """Persist inventory evidence and invalidate equipment removed by newer events."""
         if not events:
             return
         for event in events:
+            inventory = re.match(
+                r"\s*Authoritative Skyrim inventory for (.+?) at action time:\s*(.*?)\s*$",
+                event,
+                re.IGNORECASE,
+            )
+            if inventory:
+                actor = self.__unique_npc(inventory.group(1))
+                if actor:
+                    actor_ref_id = str(actor.ref_id)
+                    self.__authoritative_inventory_items_by_actor[actor_ref_id] = self.__parse_inventory_items(inventory.group(2))
+                    self.__authoritative_inventory_actor_refs.add(actor_ref_id)
+                continue
+
             transfer = re.match(
-                r"\s*(.+?)\s+(?:picked up\s*/\s*took|picked up|took)\s+(.+?)\s+from\s+.+?\.?\s*$",
+                r"\s*(.+?)\s+(?:picked up\s*/\s*took|picked up|took)\s+(.+?)\s+from\s+(.+?)\.?\s*$",
                 event,
                 re.IGNORECASE,
             )
             if not transfer:
                 continue
-            actor_name, item_name = transfer.group(1).strip(), transfer.group(2).strip()
-            matches = [
-                actor for actor in self.__npcs_in_conversation.get_non_player_characters()
-                if actor.name.casefold() == actor_name.casefold()
-            ]
-            if len(matches) != 1:
-                logger.debug("Equip transfer not persisted: actor=%s matches=%s item=%s", actor_name, len(matches), item_name)
-                continue
-            actor_ref_id = str(matches[0].ref_id)
-            items = self.__recent_equip_items_by_actor.setdefault(actor_ref_id, [])
-            if item_name not in items:
-                items.append(item_name)
-                logger.info("Equip transfer remembered: actor=%s item=%s", actor_ref_id, item_name)
+            recipient_name, item_name, source_name = (part.strip() for part in transfer.groups())
+            recipient = self.__unique_npc(recipient_name)
+            source = self.__unique_npc(source_name)
+            if recipient:
+                actor_ref_id = str(recipient.ref_id)
+                recent = self.__recent_equip_items_by_actor.setdefault(actor_ref_id, [])
+                if item_name not in recent:
+                    recent.append(item_name)
+                    logger.info("Equip transfer remembered: actor=%s item=%s", actor_ref_id, item_name)
+                inventory_items = self.__authoritative_inventory_items_by_actor.setdefault(actor_ref_id, [])
+                if item_name not in inventory_items:
+                    inventory_items.append(item_name)
+            if source:
+                actor_ref_id = str(source.ref_id)
+                target = item_name.casefold()
+                self.__authoritative_inventory_items_by_actor[actor_ref_id] = [
+                    item for item in self.__authoritative_inventory_items_by_actor.get(actor_ref_id, [])
+                    if item.casefold() != target
+                ]
+                self.__recent_equip_items_by_actor[actor_ref_id] = [
+                    item for item in self.__recent_equip_items_by_actor.get(actor_ref_id, [])
+                    if item.casefold() != target
+                ]
+                if source.equipment.remove_item(item_name):
+                    logger.info("Authoritative equipment invalidated: actor=%s item=%s", actor_ref_id, item_name)
+
+    def remember_recent_equip_transfers(self, events: list[str] | tuple[str, ...] | None) -> None:
+        """Compatibility entry point for authoritative inventory/transfer persistence."""
+        self.remember_authoritative_item_state(events)
 
     @utils.time_it
     def add_or_update_characters(self, new_list_of_npcs: list[Character], message_count: int) -> list[Character]:

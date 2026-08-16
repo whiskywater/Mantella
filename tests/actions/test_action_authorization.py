@@ -518,3 +518,55 @@ def test_correction_prompt_retains_exact_equip_constraint():
     prompt = requested.corrective_prompt(frozenset({("mantella_npc_equip", "wood-ref")}))
     assert "Authorized Equip item: Golden Saint Shield" in prompt
     assert "Equip: Golden Saint Shield" in prompt
+
+
+@pytest.mark.parametrize(
+    "player_text,owned,expected",
+    [
+        ("Put your clothes back on.", ("Roughspun Tunic",), "Roughspun Tunic"),
+        ("Get dressed.", ("Roughspun Tunic",), "Roughspun Tunic"),
+        ("Wear your clothes.", ("Roughspun Tunic",), "Roughspun Tunic"),
+        ("Put your armor back on.", ("Stormcloak Cuirass",), "Stormcloak Cuirass"),
+        ("Put some armor on.", ("Iron Boots",), "Iron Boots"),
+        ("Put your boots on.", ("Iron Boots",), "Iron Boots"),
+        ("Wear the tunic.", ("Roughspun Tunic",), "Roughspun Tunic"),
+    ],
+)
+def test_natural_equip_commands_resolve_only_currently_owned_item(player_text, owned, expected):
+    requested = ActionAuthorizationContext.for_player_turn(
+        30,
+        player_text,
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": owned},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.requested_actions == frozenset({"mantella_npc_equip"})
+    assert requested.equip_target == expected
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": expected}
+    ) == (True, "authorized")
+
+
+def test_equipment_question_does_not_authorize_equip():
+    requested = ActionAuthorizationContext.for_player_turn(
+        31,
+        "Are you wearing armor?",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Roughspun Tunic",)},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert "mantella_npc_equip" not in requested.requested_actions
+
+
+def test_authoritative_inventory_rejects_removed_exact_item():
+    requested = ActionAuthorizationContext.for_player_turn(
+        32,
+        "Equip your armor.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Roughspun Tunic",)},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target == "Roughspun Tunic"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Stormcloak Cuirass"}
+    ) == (False, "equip_target_not_authorized")

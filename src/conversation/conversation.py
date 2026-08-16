@@ -331,6 +331,15 @@ class Conversation:
                 str(character.ref_id): self.__context.get_recent_equip_items(str(character.ref_id))
                 for character in self.__context.npcs_in_conversation.get_non_player_characters()
             }
+            owned_equip_items_by_actor = {
+                str(character.ref_id): self.__context.get_known_owned_equip_items(str(character.ref_id))
+                for character in self.__context.npcs_in_conversation.get_non_player_characters()
+            }
+            authoritative_inventory_actor_refs = {
+                str(character.ref_id)
+                for character in self.__context.npcs_in_conversation.get_non_player_characters()
+                if self.__context.has_authoritative_inventory(str(character.ref_id))
+            }
             unresolved_actions = self.__output_manager.consume_missing_requested_actions()
             # Anaphoric corrective authorization is valid for exactly this
             # immediate next turn and is suppressed across participant churn.
@@ -347,6 +356,8 @@ class Conversation:
                 unresolved_actions=unresolved_actions,
                 recent_equip_items_by_actor=recent_equip_items_by_actor,
                 recent_equip_items=tuple(item for actor_items in recent_equip_items_by_actor.values() for item in actor_items),
+                owned_equip_items_by_actor=owned_equip_items_by_actor,
+                authoritative_inventory_actor_refs=authoritative_inventory_actor_refs,
             )
             requested_now = set(self.__action_authorization_context.requested_actions)
             for _, actor_actions in self.__action_authorization_context.requested_actions_by_actor:

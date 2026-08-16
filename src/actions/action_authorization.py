@@ -104,6 +104,12 @@ def _find_actions(text: str) -> frozenset[str]:
             _polite_request_pattern(r"stop\s+following\s+(?:me|us)\b"),
         ],
         "mantella_npc_equip": [
+            _boundary_pattern(r"(?:put|wear)\s+(?:your\s+)?(?:clothes|armor|armour)\s+back\s+on\b"),
+            _polite_request_pattern(r"(?:put|wear)\s+(?:your\s+)?(?:clothes|armor|armour)\s+back\s+on\b"),
+            _boundary_pattern(r"get\s+dressed\b"),
+            _polite_request_pattern(r"get\s+dressed\b"),
+            _boundary_pattern(r"put\s+(?:some\s+)?(?:clothes|armor|armour)\s+on\b"),
+            _polite_request_pattern(r"put\s+(?:some\s+)?(?:clothes|armor|armour)\s+on\b"),
             _boundary_pattern(r"(?:equip|put\s+on|wear|use|draw|ready)\s+(?:(?:the|your|this|that)\s+)?(?:it|[\w'’]+)"),
             _polite_request_pattern(r"(?:equip|put\s+on|wear|use|draw|ready)\s+(?:(?:the|your|this|that)\s+)?(?:it|[\w'’]+)"),
             _boundary_pattern(r"put\s+(?:(?:the|your|this|that)\s+)?(?:it|[\w'’]+)\s+on\b"),
@@ -180,6 +186,10 @@ def _find_unresolved_followup_actions(text: str, unresolved_actions: Iterable[st
 
 def _extract_equip_target(text: str) -> str | None:
     value = _normalise(text)
+    if re.search(r"\bget\s+dressed\b", value) or re.search(r"\b(?:put\s+(?:your\s+)?clothes(?:\s+back)?\s+on|wear\s+(?:your\s+)?clothes)\b", value):
+        return "owned clothes"
+    if re.search(r"\b(?:put\s+(?:some\s+|your\s+)?(?:armor|armour)(?:\s+back)?\s+on|wear\s+(?:your\s+)?(?:armor|armour))\b", value):
+        return "owned armor"
     if re.search(r"\b(?:equip|put\s+on|wear|use|draw|ready)\s+it\b", value):
         return "recent transferred item"
     put_on = re.search(r"\bput\s+(?:the|your|this|that)?\s*(it|[\w'’]+)\s+on\b", value)
@@ -222,6 +232,16 @@ def _resolve_equip_target(extracted: str | None, recent_items: Iterable[str]) ->
         if len(compatible) == 1:
             return compatible[0]
         return "recent transferred " + extracted
+    if extracted in {"owned clothes", "owned armor"}:
+        clothes_words = ("tunic", "robe", "clothes", "clothing", "outfit", "dress")
+        armor_words = ("armor", "armour", "cuirass", "tunic", "robe", "helmet", "shield", "boots", "gauntlets")
+        words = clothes_words if extracted == "owned clothes" else armor_words
+        compatible = tuple(item for item in recent if any(word in item.casefold() for word in words))
+        return compatible[0] if len(compatible) == 1 else extracted
+    if extracted and " " not in extracted:
+        compatible = tuple(item for item in recent if extracted in item.casefold())
+        if len(compatible) == 1:
+            return compatible[0]
     if not extracted or not extracted.startswith("recent transferred "):
         return extracted
     compatible = recent
@@ -253,6 +273,8 @@ class ActionAuthorizationContext:
     automatic_vision: bool = False
     equip_target: str | None = None
     equip_targets_by_actor: tuple[tuple[str, str], ...] = ()
+    owned_equip_items_by_actor: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    authoritative_inventory_actor_refs: frozenset[str] = frozenset()
 
     @classmethod
     def for_player_turn(
@@ -266,6 +288,8 @@ class ActionAuthorizationContext:
         recent_equip_item: str | None = None,
         recent_equip_items: Iterable[str] = (),
         recent_equip_items_by_actor: dict[str, Iterable[str]] | None = None,
+        owned_equip_items_by_actor: dict[str, Iterable[str]] | None = None,
+        authoritative_inventory_actor_refs: Iterable[str] = (),
     ) -> "ActionAuthorizationContext":
         identities = _identity_pairs(participant_identities)
         value = _normalise(player_text)
@@ -294,9 +318,19 @@ class ActionAuthorizationContext:
                 clause_actions = _find_actions(clause)
                 addressed.append((matches[0], clause_actions))
                 if "mantella_npc_equip" in clause_actions:
+                    extracted = _extract_equip_target(clause)
+                    recent_actor_items = (recent_equip_items_by_actor or {}).get(matches[0], ())
+                    use_owned = (
+                        extracted != "recent transferred item"
+                        and str(matches[0]) in {str(ref) for ref in authoritative_inventory_actor_refs}
+                    )
+                    actor_items = (
+                        (owned_equip_items_by_actor or {}).get(matches[0], recent_actor_items)
+                        if use_owned else recent_actor_items
+                    )
                     target = _resolve_equip_target(
-                        _extract_equip_target(clause),
-                        (recent_equip_items_by_actor or {}).get(matches[0], ()),
+                        extracted,
+                        actor_items,
                     )
                     if target:
                         addressed_equip_targets.append((matches[0], target))
@@ -312,6 +346,12 @@ class ActionAuthorizationContext:
         ambiguous = ambiguous_address or bool(re.search(r"\bone\s+of\s+you\b", value) and global_actions)
         recent_items = tuple(recent_equip_items) + ((recent_equip_item,) if recent_equip_item else ())
         extracted_equip_target = _extract_equip_target(value) if "mantella_npc_equip" in global_actions else None
+        if (
+            len(identities) == 1
+            and extracted_equip_target != "recent transferred item"
+            and str(identities[0][1]) in {str(ref) for ref in authoritative_inventory_actor_refs}
+        ):
+            recent_items = tuple((owned_equip_items_by_actor or {}).get(identities[0][1], recent_items))
         extracted_equip_target = _resolve_equip_target(extracted_equip_target, recent_items)
         return cls(
             turn_id,
@@ -326,6 +366,11 @@ class ActionAuthorizationContext:
             automatic_vision,
             extracted_equip_target,
             tuple(addressed_equip_targets),
+            tuple(
+                (str(ref_id), tuple(dict.fromkeys(item.strip() for item in items if item and item.strip())))
+                for ref_id, items in (owned_equip_items_by_actor or {}).items()
+            ),
+            frozenset(str(ref_id) for ref_id in authoritative_inventory_actor_refs),
         )
 
     @classmethod
@@ -346,6 +391,9 @@ class ActionAuthorizationContext:
     def for_continuation(self) -> "ActionAuthorizationContext":
         """Continue a turn after a game result without re-authorizing actions."""
         return replace(self, requested_actions=frozenset(), requested_actions_by_actor=(), equip_target=None, equip_targets_by_actor=())
+
+    def _owned_items_for_actor(self, actor_ref_id: str | None) -> tuple[str, ...]:
+        return next((items for ref_id, items in self.owned_equip_items_by_actor if ref_id == actor_ref_id), ())
 
     def resolve_actor_ref(self, display_name: str | None) -> str | None:
         if not display_name:
@@ -378,7 +426,7 @@ class ActionAuthorizationContext:
             if ref_id == actor_ref_id:
                 equip_target = target
                 break
-        if identifier == "mantella_npc_equip" and equip_target:
+        if identifier == "mantella_npc_equip":
             supplied = (arguments or {}).get("item") or (arguments or {}).get("target")
             logger.debug(
                 "Equip authorization context: turn=%s actor=%s requested_target=%s",
@@ -386,12 +434,16 @@ class ActionAuthorizationContext:
                 actor_ref_id,
                 equip_target,
             )
-            if equip_target.startswith("recent transferred "):
+            if not equip_target or equip_target.startswith("recent transferred ") or equip_target.startswith("owned "):
                 return False, "equip_target_missing"
             elif supplied is None:
                 return False, "equip_target_missing"
             if supplied and equip_target.casefold() not in str(supplied).casefold() and str(supplied).casefold() not in equip_target.casefold():
                 return False, "equip_target_not_authorized"
+            if actor_ref_id in self.authoritative_inventory_actor_refs:
+                owned = self._owned_items_for_actor(actor_ref_id)
+                if not any(str(supplied).casefold() == item.casefold() for item in owned):
+                    return False, "equip_target_not_owned"
             logger.debug("Equip target validation: authorized=%s generated=%s result=accepted", equip_target, supplied)
         if identifier == "mantella_npc_vision" and not self.automatic_vision and not self._requested_for_actor(identifier, actor_ref_id):
             return False, "current_turn_not_authorized"

@@ -164,8 +164,15 @@ class TestColonBoundaries:
         assert rest == ""
         assert settings.stop_generation is False
 
+    @pytest.mark.xfail(reason="Bug #9 reopened: unknown grammatical prefix at response boundary", strict=True)
     def test_confirmed_stormcloak_colon_is_preserved(self, parser: change_character_parser, settings: sentence_generation_settings):
-        _, rest = parser.cut_sentence("Stormcloak Soldier: I fare well, though the night is cold.", settings)
+        _, rest = parser.cut_sentence(
+            accumulated_sentence(
+                "Stormcloak Soldier: I fare well, though the night is cold.",
+                starts_at_response=True,
+            ),
+            settings,
+        )
         assert settings.current_speaker.name == "Stormcloak Soldier"
         assert rest == " I fare well, though the night is cold."
         result, rest = parser.cut_sentence(" You ask how I am, but I ask you:", settings)

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 from src.actions.action_authorization import ActionAuthorizationContext
 from src.conversation.conversation import Conversation
+from src.games.equipment import Equipment, EquipmentItem
 from src.llm.messages import UserMessage
 
 
@@ -422,6 +423,97 @@ def test_rejected_inventory_action_split_across_stream_chunks_never_reaches_tts(
     spoken = [call.args[1] for call in recording_tts.synthesize.call_args_list]
     assert not any("Skooma" in text or "Moon Sugar" in text or "Roughspun" in text for text in spoken)
     assert reply_type == "mantella_npc_action"
+
+
+def test_live_inventory_removal_then_put_clothes_back_on_uses_remaining_owned_tunic(
+    default_conversation: Conversation,
+    default_chat_manager,
+    monkeypatch,
+):
+    """Literal live state ordering: remove worn gear, then equip owned clothing."""
+    npc = default_conversation.context.npcs_in_conversation.get_non_player_characters()[0]
+    npc.equipment = Equipment({
+        "body": EquipmentItem("Stormcloak Cuirass"),
+        "feet": EquipmentItem("Iron Plate Boots"),
+        "righthand": EquipmentItem("Ancient Nord Sword"),
+    })
+    default_conversation.context.update_context(
+        default_conversation.context.location,
+        12,
+        [
+            f"Authoritative Skyrim inventory for {npc.name} at action time: Ancient Nord Sword, Stormcloak Cuirass, Golden Saint Shield, Roughspun Tunic, Iron Plate Boots.",
+            f"Prisoner picked up/took Ancient Nord Sword from {npc.name}",
+            f"Prisoner picked up/took Golden Saint Shield from {npc.name}",
+            f"Prisoner picked up/took Stormcloak Cuirass from {npc.name}",
+        ],
+        None,
+        None,
+        {},
+        None,
+    )
+    state = default_conversation.context.get_authoritative_current_state_event()
+    assert "Stormcloak Cuirass" not in state
+    assert "Ancient Nord Sword" not in state
+    assert "Iron Plate Boots" in state
+
+    scripted_llm = _ScriptedStreamingClient([
+        "Equip: Roughspun Tunic | I will put my clothes back on."
+    ])
+    recording_tts = MagicMock()
+    recording_tts.synthesize.return_value = ("unused.wav", False)
+    default_chat_manager._ChatManager__client = scripted_llm
+    default_chat_manager._ChatManager__tts = recording_tts
+    monkeypatch.setattr("src.output_manager.utils.get_audio_duration", lambda _path: 0.0)
+    default_conversation.context.have_actors_changed = False
+    _run_conversation_generation_synchronously(default_conversation, default_chat_manager, monkeypatch)
+
+    default_conversation.process_player_input("Put your clothes back on")
+    authorization = default_conversation._Conversation__action_authorization_context
+    assert authorization.equip_target == "Roughspun Tunic"
+    queue = default_conversation._Conversation__sentences
+    queue.is_more_to_come = False
+    sentences = []
+    while sentence := queue.get_next_sentence():
+        sentences.append(sentence)
+    actions = [action for sentence in sentences for action in sentence.actions]
+    assert actions == [{
+        "identifier": "mantella_npc_equip",
+        "arguments": {"item": "Roughspun Tunic"},
+    }]
+    assert not any(
+        "Stormcloak Cuirass" in call.args[1] or "Ancient Nord Sword" in call.args[1]
+        for call in recording_tts.synthesize.call_args_list
+    )
+
+
+def test_unauthorized_look_with_dependent_live_dialogue_never_reaches_tts(
+    default_conversation: Conversation,
+    default_chat_manager,
+    monkeypatch,
+):
+    scripted_llm = _ScriptedStreamingClient([
+        ["Look:", " I am already wearing my Stormcloak Cuirass and Iron Plate Boots."],
+        "I cannot do that.",
+    ])
+    recording_tts = MagicMock()
+    recording_tts.synthesize.return_value = ("unused.wav", False)
+    default_chat_manager._ChatManager__client = scripted_llm
+    default_chat_manager._ChatManager__tts = recording_tts
+    monkeypatch.setattr("src.output_manager.utils.get_audio_duration", lambda _path: 0.0)
+    default_conversation.context.have_actors_changed = False
+    _run_conversation_generation_synchronously(default_conversation, default_chat_manager, monkeypatch)
+
+    default_conversation.process_player_input("Put your clothes back on")
+    queue = default_conversation._Conversation__sentences
+    queue.is_more_to_come = False
+    leaked = []
+    while sentence := queue.get_next_sentence():
+        leaked.append(sentence)
+    assert not any("Stormcloak Cuirass" in sentence.text for sentence in leaked)
+    assert not any(
+        "Stormcloak Cuirass" in call.args[1]
+        for call in recording_tts.synthesize.call_args_list
+    )
 
 
 @pytest.mark.parametrize("iteration", range(50))
