@@ -60,6 +60,7 @@ def main() -> int:
     parser.add_argument("--exe", required=True, type=Path)
     parser.add_argument("--working-dir", type=Path)
     parser.add_argument("--config-template", type=Path)
+    parser.add_argument("--user-folder", type=Path)
     parser.add_argument("--ready-url", default="http://127.0.0.1:4999/ui")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
@@ -75,6 +76,8 @@ def main() -> int:
 
     config_path = workdir / "config.ini"
     config_backup = workdir / "config.ini.packaged-smoke-backup"
+    user_folder_path = workdir / "custom_user_folder.ini"
+    user_folder_backup = workdir / "custom_user_folder.ini.packaged-smoke-backup"
     if args.config_template:
         if not args.config_template.is_file():
             print(f"FAIL packaged startup: config template not found: {args.config_template}", file=sys.stderr)
@@ -85,6 +88,13 @@ def main() -> int:
     elif not config_path.exists():
         print(f"FAIL packaged startup: missing config.ini in {workdir}", file=sys.stderr)
         return 2
+    if args.user_folder:
+        if user_folder_path.exists():
+            shutil.copy2(user_folder_path, user_folder_backup)
+        user_folder_path.write_text(
+            "[UserFolder]\ncustom_user_folder = " + str(args.user_folder) + "\n",
+            encoding="utf-8",
+        )
 
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = subprocess.Popen(
@@ -122,6 +132,11 @@ def main() -> int:
                 shutil.move(config_backup, config_path)
             else:
                 config_path.unlink(missing_ok=True)
+        if args.user_folder:
+            if user_folder_backup.exists():
+                shutil.move(user_folder_backup, user_folder_path)
+            else:
+                user_folder_path.unlink(missing_ok=True)
         _terminate(process)
         stdout, stderr = process.communicate(timeout=5)
         output = stdout + "\n" + stderr
