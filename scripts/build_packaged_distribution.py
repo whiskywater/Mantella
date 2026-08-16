@@ -65,6 +65,8 @@ def main() -> int:
         internal / "gradio_client",
         internal / "gradio" / "blocks_events.py",
         internal / "gradio_client" / "types.json",
+        internal / "silero_vad_lite" / "data" / "silero_vad_lite.dll",
+        internal / "silero_vad_lite" / "data" / "silero_vad.onnx",
         package / "data" / "language_support.csv",
         package / "src" / "ui" / "style.css",
     ]
@@ -86,6 +88,7 @@ def main() -> int:
             "--timeout",
             str(args.timeout),
             "--probe-mantella-init",
+            "--probe-conversation-start",
             *( ["--config-template", str(args.config_template.resolve())] if args.config_template else [] ),
             *( ["--user-folder", str(args.user_folder.resolve())] if args.user_folder else [] ),
         ],

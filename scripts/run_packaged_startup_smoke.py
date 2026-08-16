@@ -71,6 +71,11 @@ def main() -> int:
         action="store_true",
         help="POST the real /mantella initialize route after UI readiness.",
     )
+    parser.add_argument(
+        "--probe-conversation-start",
+        action="store_true",
+        help="Start an isolated microphone conversation after route initialization; exercises Transcriber and Silero VAD.",
+    )
     args = parser.parse_args()
 
     exe = args.exe.resolve()
@@ -148,6 +153,54 @@ def main() -> int:
                         if body.get("mantella_reply_type") != "mantella_init_completed":
                             raise RuntimeError(f"unexpected initialize response: {body}")
                         print("PASS packaged Mantella initialization / tokenizer probe")
+                        if args.probe_conversation_start:
+                            start_body = {
+                                "mantella_request_type": "mantella_start_conversation",
+                                "mantella_worldid": "PackagedSmoke",
+                                "mantella_input_type": "mantella_mic_input",
+                                "mantella_actors": [
+                                    {
+                                        "mantella_actor_baseid": 0,
+                                        "mantella_actor_refid": 0,
+                                        "mantella_actor_name": "Prisoner",
+                                        "mantella_actor_gender": 0,
+                                        "mantella_actor_race": "[Race <NordRace (00013746)>]",
+                                        "mantella_actor_is_player": True,
+                                        "mantella_actor_relationshiprank": 0,
+                                        "mantella_actor_voicetype": "[VoiceType <MaleEvenToned (00013AD2)>]",
+                                        "mantella_actor_is_in_combat": False,
+                                        "mantella_actor_is_enemy": False,
+                                        "mantella_actor_custom_values": {"mantella_actor_pc_description": "", "mantella_actor_pc_voiceplayerinput": False},
+                                        "mantella_equipment": {},
+                                    },
+                                    {
+                                        "mantella_actor_baseid": 0,
+                                        "mantella_actor_refid": 0,
+                                        "mantella_actor_name": "Guard",
+                                        "mantella_actor_gender": 0,
+                                        "mantella_actor_race": "[Race <ImperialRace (00013744)>]",
+                                        "mantella_actor_is_player": False,
+                                        "mantella_actor_relationshiprank": 0,
+                                        "mantella_actor_voicetype": "[VoiceType <MaleEvenToned (00013AD2)>]",
+                                        "mantella_actor_is_in_combat": False,
+                                        "mantella_actor_is_enemy": False,
+                                        "mantella_actor_custom_values": None,
+                                        "mantella_equipment": {},
+                                    },
+                                ],
+                                "mantella_context": {"mantella_context_location": "Skyrim", "mantella_context_time": 12, "mantella_context_ingame_events": []},
+                            }
+                            start_request = Request(
+                                args.ready_url.rsplit("/ui", 1)[0] + "/mantella",
+                                data=json.dumps(start_body).encode("utf-8"),
+                                headers={"Content-Type": "application/json"},
+                                method="POST",
+                            )
+                            with urlopen(start_request, timeout=20) as response:
+                                start_response = json.loads(response.read().decode("utf-8"))
+                            if start_response.get("mantella_reply_type") != "mantella_start_conversation_completed":
+                                raise RuntimeError(f"unexpected conversation-start response: {start_response}")
+                            print("PASS packaged conversation-start / STT-VAD probe")
                     except Exception as exc:
                         failure_message = f"FAIL packaged Mantella initialization probe: {exc}"
                         break

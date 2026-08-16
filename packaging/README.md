@@ -16,5 +16,8 @@ runtimes. The preflight intentionally fails when Tk is unavailable. The spec
 collects `gradio` and `gradio_client` package data/modules because their UI
 startup path performs dynamic imports and reads JSON metadata.
 The build gate also POSTs the real `/mantella` initialize route after UI
-readiness. This constructs the production `LLMClient`, including tokenizer
-initialization, so a package that only serves `/ui` is rejected.
+readiness, then starts an isolated microphone conversation. This constructs
+the production `LLMClient` and tokenizer, followed by `Transcriber` and
+`SileroVAD`; a package that only serves `/ui` is rejected. A distribution is
+deployable only when it can initialize the core components needed to start a
+conversation.
