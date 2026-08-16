@@ -55,8 +55,19 @@ def main() -> int:
     source_custom_folder = source / "custom_user_folder.ini"
     if source_custom_folder.is_file():
         shutil.copy2(source_custom_folder, package / source_custom_folder.name)
+    source_runtime_assets = source / "src"
+    target_runtime_assets = package / "src"
+    if source_runtime_assets.is_dir():
+        shutil.copytree(source_runtime_assets, target_runtime_assets, dirs_exist_ok=True)
     internal = package / "_internal"
-    required = [package / "Mantella.exe", internal / "gradio_client", internal / "gradio" / "blocks_events.py", internal / "gradio_client" / "types.json"]
+    required = [
+        package / "Mantella.exe",
+        internal / "gradio_client",
+        internal / "gradio" / "blocks_events.py",
+        internal / "gradio_client" / "types.json",
+        package / "data" / "language_support.csv",
+        package / "src" / "ui" / "style.css",
+    ]
     missing = [str(path) for path in required if not path.exists()]
     tk_binary = list(internal.glob("_tkinter*.pyd")) + list(internal.glob("**/_tkinter*.pyd"))
     if not tk_binary and not (internal / "tkinter").exists():
