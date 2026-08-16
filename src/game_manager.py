@@ -21,6 +21,7 @@ from src.actions.function_manager import FunctionManager
 from src.random_llm_selector import RandomLLMSelector, LLMSelection
 from src.llm.client_base import ClientBase
 from itertools import count
+import time
 
 logger = utils.get_logger()
 _MANAGER_GENERATIONS = count(1)
