@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
+from urllib.request import Request
+import json
 
 
 FAILURE_MARKERS = (
@@ -64,6 +66,11 @@ def main() -> int:
     parser.add_argument("--user-folder", type=Path)
     parser.add_argument("--ready-url", default="http://127.0.0.1:4999/ui")
     parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument(
+        "--probe-mantella-init",
+        action="store_true",
+        help="POST the real /mantella initialize route after UI readiness.",
+    )
     args = parser.parse_args()
 
     exe = args.exe.resolve()
@@ -79,6 +86,8 @@ def main() -> int:
     config_backup = workdir / "config.ini.packaged-smoke-backup"
     user_folder_path = workdir / "custom_user_folder.ini"
     user_folder_backup = workdir / "custom_user_folder.ini.packaged-smoke-backup"
+    isolated_config_path: Path | None = None
+    isolated_config_backup: Path | None = None
     if args.config_template:
         if not args.config_template.is_file():
             print(f"FAIL packaged startup: config template not found: {args.config_template}", file=sys.stderr)
@@ -90,6 +99,13 @@ def main() -> int:
         print(f"FAIL packaged startup: missing config.ini in {workdir}", file=sys.stderr)
         return 2
     if args.user_folder:
+        args.user_folder.mkdir(parents=True, exist_ok=True)
+        isolated_config_path = args.user_folder / "config.ini"
+        isolated_config_backup = args.user_folder / "config.ini.packaged-smoke-backup"
+        if args.config_template:
+            if isolated_config_path.exists():
+                shutil.copy2(isolated_config_path, isolated_config_backup)
+            shutil.copy2(args.config_template, isolated_config_path)
         if user_folder_path.exists():
             shutil.copy2(user_folder_path, user_folder_backup)
         user_folder_path.write_text(
@@ -119,6 +135,22 @@ def main() -> int:
                 break
             if _ready(args.ready_url):
                 print(f"PASS packaged startup: ready at {args.ready_url}")
+                if args.probe_mantella_init:
+                    request = Request(
+                        args.ready_url.rsplit("/ui", 1)[0] + "/mantella",
+                        data=json.dumps({"mantella_request_type": "mantella_initialize"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    try:
+                        with urlopen(request, timeout=20) as response:
+                            body = json.loads(response.read().decode("utf-8"))
+                        if body.get("mantella_reply_type") != "mantella_init_completed":
+                            raise RuntimeError(f"unexpected initialize response: {body}")
+                        print("PASS packaged Mantella initialization / tokenizer probe")
+                    except Exception as exc:
+                        failure_message = f"FAIL packaged Mantella initialization probe: {exc}"
+                        break
                 success = True
                 break
             time.sleep(0.2)
@@ -135,6 +167,11 @@ def main() -> int:
                 shutil.move(user_folder_backup, user_folder_path)
             else:
                 user_folder_path.unlink(missing_ok=True)
+            if isolated_config_path is not None:
+                if isolated_config_backup is not None and isolated_config_backup.exists():
+                    shutil.move(isolated_config_backup, isolated_config_path)
+                elif args.config_template:
+                    isolated_config_path.unlink(missing_ok=True)
         _terminate(process)
         stdout_file.close(); stderr_file.close()
         output = stdout_path.read_text(errors="replace") + "\n" + stderr_path.read_text(errors="replace")

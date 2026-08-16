@@ -14,13 +14,15 @@ source_root = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 gradio_datas, gradio_bins, gradio_hidden = collect_all("gradio")
 client_datas, client_bins, client_hidden = collect_all("gradio_client")
 tk_hidden = collect_submodules("tkinter")
+tiktoken_datas, tiktoken_bins, tiktoken_hidden = collect_all("tiktoken")
+tiktoken_ext_hidden = collect_submodules("tiktoken_ext")
 
 a = Analysis(
     [os.path.join(source_root, "main.py")],
     pathex=[source_root],
-    binaries=gradio_bins + client_bins,
-    datas=gradio_datas + client_datas,
-    hiddenimports=gradio_hidden + client_hidden + tk_hidden,
+    binaries=gradio_bins + client_bins + tiktoken_bins,
+    datas=gradio_datas + client_datas + tiktoken_datas,
+    hiddenimports=gradio_hidden + client_hidden + tk_hidden + tiktoken_hidden + tiktoken_ext_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -40,6 +42,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=True,
+    icon=os.path.join(source_root, "Mantella.ico"),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

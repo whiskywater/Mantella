@@ -85,6 +85,7 @@ def main() -> int:
             str(package),
             "--timeout",
             str(args.timeout),
+            "--probe-mantella-init",
             *( ["--config-template", str(args.config_template.resolve())] if args.config_template else [] ),
             *( ["--user-folder", str(args.user_folder.resolve())] if args.user_folder else [] ),
         ],
