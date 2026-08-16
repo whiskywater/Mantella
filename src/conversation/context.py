@@ -1,4 +1,5 @@
 from typing import Any, Hashable
+import re
 from src.conversation.action import Action
 from src.http.communication_constants import communication_constants
 from src.conversation.conversation_log import conversation_log
@@ -35,6 +36,7 @@ class Context:
         self.__ingame_time: int = 12
         self.__game_days: float = 1.0  # Full game timestamp (days.fraction)
         self.__ingame_events: list[str] = []
+        self.__recent_equip_items_by_actor: dict[str, list[str]] = {}
         self.__vision_hints: str = ''
         self.__have_actors_changed: bool = False
         self.__game: GameEnum = config.game
@@ -101,12 +103,20 @@ class Context:
         self.__location_changed = False
 
     def get_authoritative_current_state_event(self) -> str:
-        """Return the current present-state location for the next LLM turn."""
-        return (
+        """Return present-state location and equipment for the next LLM turn."""
+        state = (
             "AUTHORITATIVE CURRENT SKYRIM STATE: The group is currently in "
             f"{self.__location}. This current location overrides older location "
             "claims in dialogue, memories, and prior scene context."
         )
+        equipment = self.__get_npc_equipment_text()
+        if equipment:
+            state += (
+                " AUTHORITATIVE CURRENT SKYRIM EQUIPMENT: "
+                f"{equipment} This overrides older equipment descriptions, "
+                "conversation claims, memories, and cached/static context."
+            )
+        return state
     
     @have_actors_changed.setter
     def have_actors_changed(self, value: bool):
@@ -154,6 +164,42 @@ class Context:
     @utils.time_it
     def clear_context_ingame_events(self):
         self.__ingame_events.clear()
+
+    def get_recent_equip_items(self, actor_ref_id: str) -> tuple[str, ...]:
+        """Return immediate authoritative transfer referents for one stable actor."""
+        return tuple(self.__recent_equip_items_by_actor.get(str(actor_ref_id), []))
+
+    def clear_recent_equip_items(self, actor_ref_id: str | None = None) -> None:
+        if actor_ref_id is None:
+            self.__recent_equip_items_by_actor.clear()
+        else:
+            self.__recent_equip_items_by_actor.pop(str(actor_ref_id), None)
+
+    def remember_recent_equip_transfers(self, events: list[str] | tuple[str, ...] | None) -> None:
+        """Persist authoritative transfers independently of the prompt event buffer."""
+        if not events:
+            return
+        for event in events:
+            transfer = re.match(
+                r"\s*(.+?)\s+(?:picked up\s*/\s*took|picked up|took)\s+(.+?)\s+from\s+.+?\.?\s*$",
+                event,
+                re.IGNORECASE,
+            )
+            if not transfer:
+                continue
+            actor_name, item_name = transfer.group(1).strip(), transfer.group(2).strip()
+            matches = [
+                actor for actor in self.__npcs_in_conversation.get_non_player_characters()
+                if actor.name.casefold() == actor_name.casefold()
+            ]
+            if len(matches) != 1:
+                logger.debug("Equip transfer not persisted: actor=%s matches=%s item=%s", actor_name, len(matches), item_name)
+                continue
+            actor_ref_id = str(matches[0].ref_id)
+            items = self.__recent_equip_items_by_actor.setdefault(actor_ref_id, [])
+            if item_name not in items:
+                items.append(item_name)
+                logger.info("Equip transfer remembered: actor=%s item=%s", actor_ref_id, item_name)
 
     @utils.time_it
     def add_or_update_characters(self, new_list_of_npcs: list[Character], message_count: int) -> list[Character]:
@@ -264,6 +310,7 @@ class Context:
 
         if custom_ingame_events:
             self.__ingame_events.extend(custom_ingame_events)
+            self.remember_recent_equip_transfers(custom_ingame_events)
 
         if config_settings:
             self.__config_settings = config_settings
