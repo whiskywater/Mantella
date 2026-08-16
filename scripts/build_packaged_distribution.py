@@ -34,7 +34,7 @@ def main() -> int:
             "--clean",
             str(source / "packaging" / "Mantella.spec"),
             "--distpath",
-            str(dist.parent),
+            str(dist),
             "--workpath",
             str(work),
         ],
