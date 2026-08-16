@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.error import URLError
@@ -97,16 +98,13 @@ def main() -> int:
         )
 
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    stdout_path = Path(tempfile.mkstemp(prefix="mantella-smoke-out-", suffix=".log")[1])
+    stderr_path = Path(tempfile.mkstemp(prefix="mantella-smoke-err-", suffix=".log")[1])
+    stdout_file = stdout_path.open("w", encoding="utf-8", errors="replace")
+    stderr_file = stderr_path.open("w", encoding="utf-8", errors="replace")
     process = subprocess.Popen(
-        [str(exe)],
-        cwd=workdir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=creationflags,
-        start_new_session=(os.name != "nt"),
+        [str(exe)], cwd=workdir, stdout=stdout_file, stderr=stderr_file,
+        creationflags=creationflags, start_new_session=(os.name != "nt"),
     )
     deadline = time.monotonic() + args.timeout
     success = False
@@ -114,8 +112,8 @@ def main() -> int:
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                output = stdout + "\n" + stderr
+                stdout_file.flush(); stderr_file.flush()
+                output = stdout_path.read_text(errors="replace") + "\n" + stderr_path.read_text(errors="replace")
                 print(output, end="")
                 failure_message = f"FAIL packaged startup: exited early with code {process.returncode}"
                 break
@@ -138,8 +136,9 @@ def main() -> int:
             else:
                 user_folder_path.unlink(missing_ok=True)
         _terminate(process)
-        stdout, stderr = process.communicate(timeout=5)
-        output = stdout + "\n" + stderr
+        stdout_file.close(); stderr_file.close()
+        output = stdout_path.read_text(errors="replace") + "\n" + stderr_path.read_text(errors="replace")
+        stdout_path.unlink(missing_ok=True); stderr_path.unlink(missing_ok=True)
         if any(marker in output for marker in FAILURE_MARKERS):
             print(output, end="")
             success = False
