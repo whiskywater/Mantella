@@ -55,6 +55,9 @@ def main() -> int:
     source_custom_folder = source / "custom_user_folder.ini"
     if source_custom_folder.is_file():
         shutil.copy2(source_custom_folder, package / source_custom_folder.name)
+    source_icon = source / "Mantella.ico"
+    if source_icon.is_file():
+        shutil.copy2(source_icon, package / source_icon.name)
     source_runtime_assets = source / "src"
     target_runtime_assets = package / "src"
     if source_runtime_assets.is_dir():
@@ -69,6 +72,7 @@ def main() -> int:
         internal / "silero_vad_lite" / "data" / "silero_vad.onnx",
         package / "data" / "language_support.csv",
         package / "src" / "ui" / "style.css",
+        package / "Mantella.ico",
     ]
     missing = [str(path) for path in required if not path.exists()]
     tk_binary = list(internal.glob("_tkinter*.pyd")) + list(internal.glob("**/_tkinter*.pyd"))
