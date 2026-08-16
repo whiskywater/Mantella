@@ -9,6 +9,7 @@ representative config.ini/custom_user_folder.ini.
 from __future__ import annotations
 
 import argparse
+import shutil
 import os
 import signal
 import subprocess
@@ -58,6 +59,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True, type=Path)
     parser.add_argument("--working-dir", type=Path)
+    parser.add_argument("--config-template", type=Path)
     parser.add_argument("--ready-url", default="http://127.0.0.1:4999/ui")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
@@ -69,6 +71,19 @@ def main() -> int:
         return 2
     if not (workdir / "_internal").is_dir():
         print(f"FAIL packaged startup: missing _internal beside {exe}", file=sys.stderr)
+        return 2
+
+    config_path = workdir / "config.ini"
+    config_backup = workdir / "config.ini.packaged-smoke-backup"
+    if args.config_template:
+        if not args.config_template.is_file():
+            print(f"FAIL packaged startup: config template not found: {args.config_template}", file=sys.stderr)
+            return 2
+        if config_path.exists():
+            shutil.copy2(config_path, config_backup)
+        shutil.copy2(args.config_template, config_path)
+    elif not config_path.exists():
+        print(f"FAIL packaged startup: missing config.ini in {workdir}", file=sys.stderr)
         return 2
 
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -102,6 +117,11 @@ def main() -> int:
         else:
             failure_message = f"FAIL packaged startup: readiness timeout ({args.ready_url})"
     finally:
+        if args.config_template:
+            if config_backup.exists():
+                shutil.move(config_backup, config_path)
+            else:
+                config_path.unlink(missing_ok=True)
         _terminate(process)
         stdout, stderr = process.communicate(timeout=5)
         output = stdout + "\n" + stderr

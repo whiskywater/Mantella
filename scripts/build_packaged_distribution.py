@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--dist", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--config-template", type=Path)
     args = parser.parse_args()
     source = args.source.resolve()
     dist = args.dist.resolve()
@@ -61,6 +62,7 @@ def main() -> int:
             str(package),
             "--timeout",
             str(args.timeout),
+            *( ["--config-template", str(args.config_template.resolve())] if args.config_template else [] ),
         ],
         source,
     )
