@@ -205,7 +205,7 @@ def _extract_equip_target(text: str) -> str | None:
     if re.search(r"\barmor\s+i\s+just\s+gave\s+you\b", target):
         return "recent transferred armor"
     if target in {"armor", "armour"}:
-        return "recent transferred armor"
+        return "owned armor"
     if target == "weapon":
         return "recent transferred weapon"
     if target in {"shield", "helmet", "boots", "gauntlets", "sword", "bow", "mace", "axe"}:
@@ -255,6 +255,18 @@ def _resolve_equip_target(extracted: str | None, recent_items: Iterable[str]) ->
         category = extracted.removeprefix("recent transferred ")
         compatible = tuple(item for item in recent if category in item.casefold())
     return compatible[0] if len(compatible) == 1 else extracted
+
+
+def _equip_item_matches_category(category: str, item: str) -> bool:
+    """Return whether a concrete item fits an unresolved owned-item request."""
+    value = item.casefold()
+    if category == "owned clothes":
+        words = ("tunic", "robe", "clothes", "clothing", "outfit", "dress")
+    elif category == "owned armor":
+        words = ("armor", "armour", "cuirass", "tunic", "robe", "helmet", "shield", "boots", "gauntlets")
+    else:
+        return False
+    return any(word in value for word in words)
 
 
 @dataclass(frozen=True)
@@ -434,13 +446,27 @@ class ActionAuthorizationContext:
                 actor_ref_id,
                 equip_target,
             )
-            if not equip_target or equip_target.startswith("recent transferred ") or equip_target.startswith("owned "):
+            category_target = equip_target in {"owned clothes", "owned armor"}
+            if category_target:
+                # Category requests may legitimately have several owned
+                # candidates.  Let the model select a concrete item, then
+                # validate that selection against this immutable turn's
+                # authoritative inventory snapshot and category.
+                if supplied is None or actor_ref_id not in self.authoritative_inventory_actor_refs:
+                    return False, "equip_target_missing"
+                owned = self._owned_items_for_actor(actor_ref_id)
+                supplied_text = str(supplied)
+                if not any(supplied_text.casefold() == item.casefold() for item in owned):
+                    return False, "equip_target_not_owned"
+                if not _equip_item_matches_category(equip_target, supplied_text):
+                    return False, "equip_target_not_authorized"
+            elif not equip_target or equip_target.startswith("recent transferred ") or equip_target.startswith("owned "):
                 return False, "equip_target_missing"
             elif supplied is None:
                 return False, "equip_target_missing"
-            if supplied and equip_target.casefold() not in str(supplied).casefold() and str(supplied).casefold() not in equip_target.casefold():
+            if not category_target and supplied and equip_target.casefold() not in str(supplied).casefold() and str(supplied).casefold() not in equip_target.casefold():
                 return False, "equip_target_not_authorized"
-            if actor_ref_id in self.authoritative_inventory_actor_refs:
+            if not category_target and actor_ref_id in self.authoritative_inventory_actor_refs:
                 owned = self._owned_items_for_actor(actor_ref_id)
                 if not any(str(supplied).casefold() == item.casefold() for item in owned):
                     return False, "equip_target_not_owned"

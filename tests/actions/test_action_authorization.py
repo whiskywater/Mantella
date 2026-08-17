@@ -547,6 +547,96 @@ def test_natural_equip_commands_resolve_only_currently_owned_item(player_text, o
     ) == (True, "authorized")
 
 
+def test_unresolved_armor_category_accepts_owned_concrete_model_target():
+    requested = ActionAuthorizationContext.for_player_turn(
+        33,
+        "Put your armor on.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={
+            "wood-ref": (
+                "Stormcloak Cuirass",
+                "Steel Soldier Gauntlets",
+                "Iron Plate Boots",
+                "Roughspun Tunic",
+            )
+        },
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target == "owned armor"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Stormcloak Cuirass"}
+    ) == (True, "authorized")
+
+
+def test_unresolved_armor_category_rejects_removed_or_unowned_target():
+    requested = ActionAuthorizationContext.for_player_turn(
+        34,
+        "Equip your armor.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Steel Soldier Gauntlets", "Roughspun Tunic")},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target == "owned armor"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Stormcloak Cuirass"}
+    ) == (False, "equip_target_not_owned")
+
+
+def test_unresolved_clothing_category_accepts_owned_tunic():
+    requested = ActionAuthorizationContext.for_player_turn(
+        35,
+        "Get dressed.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Roughspun Tunic", "Fine Robe")},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target == "owned clothes"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Roughspun Tunic"}
+    ) == (True, "authorized")
+
+
+def test_unresolved_armor_category_rejects_owned_non_armor_item():
+    requested = ActionAuthorizationContext.for_player_turn(
+        36,
+        "Put your armor on.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Ancient Nord Sword", "Steel Soldier Gauntlets", "Iron Plate Boots")},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target == "owned armor"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Ancient Nord Sword"}
+    ) == (False, "equip_target_not_authorized")
+
+
+def test_exact_equip_target_remains_authorized():
+    requested = ActionAuthorizationContext.for_player_turn(
+        37,
+        "Equip the Golden Saint Shield.",
+        [("Wood Elf", "wood-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Golden Saint Shield",)},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    assert requested.equip_target.casefold() == "golden saint shield"
+    assert requested.authorize(
+        "mantella_npc_equip", "wood-ref", {"item": "Golden Saint Shield"}
+    ) == (True, "authorized")
+
+
+def test_category_equip_still_rejects_stale_generation_and_wrong_actor():
+    requested = ActionAuthorizationContext.for_player_turn(
+        38,
+        "Put your armor on.",
+        [("Wood Elf", "wood-ref"), ("Sven", "sven-ref")],
+        owned_equip_items_by_actor={"wood-ref": ("Stormcloak Cuirass",)},
+        authoritative_inventory_actor_refs={"wood-ref"},
+    )
+    args = {"item": "Stormcloak Cuirass"}
+    assert requested.as_stale().authorize("mantella_npc_equip", "wood-ref", args) == (False, "stale_turn")
+    assert requested.authorize("mantella_npc_equip", "sven-ref", args)[0] is False
+
+
 def test_equipment_question_does_not_authorize_equip():
     requested = ActionAuthorizationContext.for_player_turn(
         31,
