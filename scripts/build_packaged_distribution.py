@@ -70,6 +70,8 @@ def main() -> int:
         internal / "gradio_client" / "types.json",
         internal / "silero_vad_lite" / "data" / "silero_vad_lite.dll",
         internal / "silero_vad_lite" / "data" / "silero_vad.onnx",
+        internal / "moonshine_onnx" / "assets" / "tokenizer.json",
+        internal / "moonshine_onnx" / "assets" / "beckett.wav",
         package / "data" / "language_support.csv",
         package / "src" / "ui" / "style.css",
         package / "Mantella.ico",
